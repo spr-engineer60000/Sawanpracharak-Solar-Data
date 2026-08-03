@@ -20,6 +20,7 @@
 
 const SHEET_NAME = 'History';
 const MAX_HISTORY_ROWS_FOR_CHART = 288; // ~24h of data at 5-minute intervals
+const TIMEZONE = 'Asia/Bangkok';
 
 const COLUMNS = [
   'timestamp',
@@ -81,8 +82,12 @@ function doPost(e) {
 }
 
 function doGet(e) {
-  if (e && e.parameter && e.parameter.format === 'json') {
+  const params = (e && e.parameter) || {};
+  if (params.format === 'json') {
     return jsonResponse_(buildDashboardData_());
+  }
+  if (params.format === 'chart') {
+    return jsonResponse_(buildChartData_(params));
   }
   const template = HtmlService.createTemplateFromFile('Dashboard');
   return template
@@ -116,6 +121,105 @@ function buildDashboardData_() {
   return { latest, history };
 }
 
+/**
+ * Historical chart data for the "วัน / เดือน / ปี" (day / month / year) tabs.
+ * params:
+ *   view = 'day'   + date  ('yyyy-MM-dd', defaults to today, Asia/Bangkok)
+ *          -> per-reading PV/grid/load power series for that one day
+ *   view = 'month' + year, month (1-12, defaults to current)
+ *          -> per-day total production (kWh) for that month
+ *   view = 'year'  + year (defaults to current)
+ *          -> per-month total production (kWh) for that year
+ *
+ * NOTE: this reads the whole History sheet every call. Fine for the data
+ * volumes a single-plant 5-minute scrape produces over a year or two; if the
+ * sheet grows very large, consider maintaining a separate daily-rollup sheet
+ * instead of scanning raw rows here.
+ */
+function buildChartData_(params) {
+  const view = params.view || 'day';
+  const sheet = getOrCreateSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { view: view, points: [] };
+
+  const numRows = lastRow - 1;
+  const rows = sheet.getRange(2, 1, numRows, COLUMNS.length).getValues().map(rowToObject_);
+
+  if (view === 'month') return buildMonthChart_(rows, params);
+  if (view === 'year') return buildYearChart_(rows, params);
+  return buildDayChart_(rows, params);
+}
+
+function buildDayChart_(rows, params) {
+  const date = params.date || Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd');
+  const points = rows
+    .filter(function (r) { return dateKey_(r.timestamp) === date; })
+    .map(function (r) {
+      return {
+        timestamp: toIso_(r.timestamp),
+        pv_power_kw: r.pv_power_kw,
+        grid_exchange_mw: r.grid_exchange_mw,
+        home_load_mw: r.home_load_mw,
+      };
+    });
+  return { view: 'day', date: date, points: points };
+}
+
+function buildMonthChart_(rows, params) {
+  const year = parseInt(params.year, 10) || currentYear_();
+  const month = parseInt(params.month, 10) || currentMonth_();
+  const prefix = year + '-' + pad2_(month);
+  const byDay = dailyProductionTotals_(rows, prefix);
+  const points = Object.keys(byDay)
+    .sort()
+    .map(function (key) { return { label: key.slice(8, 10), production_kwh: byDay[key] }; });
+  return { view: 'month', year: year, month: month, points: points };
+}
+
+function buildYearChart_(rows, params) {
+  const year = parseInt(params.year, 10) || currentYear_();
+  const byDay = dailyProductionTotals_(rows, String(year));
+  const byMonth = {};
+  Object.keys(byDay).forEach(function (key) {
+    const month = key.slice(5, 7);
+    byMonth[month] = (byMonth[month] || 0) + byDay[key];
+  });
+  const points = Object.keys(byMonth)
+    .sort()
+    .map(function (month) { return { label: month, production_kwh: byMonth[month] }; });
+  return { view: 'year', year: year, points: points };
+}
+
+// Groups rows by calendar day (yyyy-MM-dd) whose key starts with keyPrefix,
+// taking the MAX production_today seen per day -- since that field is a
+// running total through the day, its last/highest reading approximates the
+// day's final production total.
+function dailyProductionTotals_(rows, keyPrefix) {
+  const byDay = {};
+  rows.forEach(function (r) {
+    const key = dateKey_(r.timestamp);
+    if (key.indexOf(keyPrefix) !== 0) return;
+    const val = Number(r.production_today);
+    if (Number.isNaN(val)) return;
+    if (!(key in byDay) || val > byDay[key]) byDay[key] = val;
+  });
+  return byDay;
+}
+
+function dateKey_(ts) {
+  const d = ts instanceof Date ? ts : new Date(ts);
+  return Utilities.formatDate(d, TIMEZONE, 'yyyy-MM-dd');
+}
+
+function toIso_(ts) {
+  const d = ts instanceof Date ? ts : new Date(ts);
+  return d.toISOString();
+}
+
+function pad2_(n) { return (n < 10 ? '0' : '') + n; }
+function currentYear_() { return Number(Utilities.formatDate(new Date(), TIMEZONE, 'yyyy')); }
+function currentMonth_() { return Number(Utilities.formatDate(new Date(), TIMEZONE, 'M')); }
+
 function rowToObject_(row) {
   const obj = {};
   COLUMNS.forEach((col, i) => {
@@ -137,7 +241,7 @@ function jsonResponse_(obj, statusCode) {
  * Change YOUR_SECRET_HERE, run it once, then you can delete the line.
  */
 function setup_setWebhookSecret() {
-  const YOUR_SECRET_HERE = 'sawan-solar-2569';
+  const YOUR_SECRET_HERE = 'change-me-to-a-random-string';
   PropertiesService.getScriptProperties().setProperty('WEBHOOK_SECRET', YOUR_SECRET_HERE);
   Logger.log('Webhook secret saved.');
 }
