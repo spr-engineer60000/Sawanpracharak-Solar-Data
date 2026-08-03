@@ -34,6 +34,8 @@ const COLUMNS = [
   'co2_reduction_ton',
   'coal_saved_ton',
   'trees_equivalent',
+  'home_load_mw',
+  'grid_exchange_mw',
 ];
 
 function getOrCreateSheet_() {
@@ -43,6 +45,15 @@ function getOrCreateSheet_() {
     sheet = ss.insertSheet(SHEET_NAME);
     sheet.appendRow(COLUMNS.map((c) => c));
     sheet.setFrozenRows(1);
+    return sheet;
+  }
+  // Sheet already existed (e.g. from before home_load_mw/grid_exchange_mw
+  // were added) -- extend the header row in place so new columns get labels.
+  const existingCols = sheet.getLastColumn();
+  if (existingCols < COLUMNS.length) {
+    sheet
+      .getRange(1, existingCols + 1, 1, COLUMNS.length - existingCols)
+      .setValues([COLUMNS.slice(existingCols)]);
   }
   return sheet;
 }
