@@ -14,6 +14,9 @@
       --border: #e4e9e6;
       --good: #2e9e5b;
       --bad: #d64545;
+      --pv-color: #f5a623;
+      --grid-color: #4a7fd6;
+      --load-color: #e0b400;
     }
     * { box-sizing: border-box; }
     body {
@@ -50,56 +53,107 @@
     }
     .status.stale .dot { background: var(--bad); }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 14px;
-      margin-bottom: 20px;
-    }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px 18px;
-    }
-    .card .label {
-      font-size: 12.5px;
-      color: var(--muted);
-      margin-bottom: 6px;
-    }
-    .card .value {
-      font-size: 26px;
-      font-weight: 700;
-      line-height: 1.1;
-    }
-    .card .value .unit {
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--muted);
-      margin-left: 4px;
-    }
-    .card.accent .value { color: var(--accent-dark); }
-
     .panel {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 18px;
+      padding: 20px;
+      margin-bottom: 16px;
     }
     .panel h2 {
       font-size: 15px;
-      margin: 0 0 12px 0;
+      margin: 0 0 14px 0;
       font-weight: 600;
       color: var(--text);
     }
-    #chart { width: 100%; height: 320px; }
 
+    /* ---- Flow diagram card (mirrors the iSolarCloud overview panel) ---- */
+    .flow-card {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 32px;
+      align-items: center;
+    }
+    .flow-diagram {
+      position: relative;
+      flex: 1 1 360px;
+      height: 240px;
+      min-width: 300px;
+    }
+    .flow-diagram svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+    .flow-node {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      width: 110px;
+    }
+    .flow-node .icon { width: 46px; height: 46px; margin-bottom: 4px; }
+    .flow-node .node-value { font-size: 15px; font-weight: 700; }
+    .flow-node .node-label { font-size: 11px; color: var(--muted); }
+    .node-solar { top: 0; left: 50%; transform: translateX(-50%); }
+    .node-home  { bottom: 0; left: 4%; }
+    .node-grid  { bottom: 0; right: 4%; }
+
+    .flow-stats { flex: 1 1 220px; display: flex; flex-direction: column; gap: 18px; }
+    .flow-stats .label { font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+    .flow-stats .value { font-size: 26px; font-weight: 700; line-height: 1.1; }
+    .flow-stats .value.accent { color: var(--accent-dark); }
+    .flow-stats .value .unit { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+
+    /* ---- Daily energy summary bar ---- */
+    .summary-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      background: #eef1ef;
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .summary-bar .cell {
+      padding: 16px 18px;
+      border-right: 1px solid var(--border);
+    }
+    .summary-bar .cell:last-child { border-right: none; }
+    .summary-bar .label { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+    .summary-bar .value { font-size: 22px; font-weight: 700; }
+    .summary-bar .value .unit { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+
+    #chart { width: 100%; height: 320px; }
+    .legend-row { display: flex; gap: 18px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .legend-row .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+
+    /* ---- Environmental impact cards ---- */
     .env-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
       gap: 14px;
-      margin-top: 20px;
     }
+    .env-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .env-card .badge {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .env-card .badge.co2 { background: #e4eefb; }
+    .env-card .badge.coal { background: #fbeee0; }
+    .env-card .badge.trees { background: #e5f4ea; }
+    .env-card .value { font-size: 20px; font-weight: 700; }
+    .env-card .value .unit { font-size: 12.5px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+    .env-card .label { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
     footer {
       margin-top: 18px;
@@ -111,54 +165,101 @@
 </head>
 <body>
   <header>
-    <h1>&#9728;&#65039; Sawan Pracharak Hospital &mdash; Solar Dashboard</h1>
-    <div class="status" id="status"><span class="dot"></span><span id="statusText">&#3585;&#3635;&#3621;&#3633;&#3591;&#3650;&#3627;&#3621;&#3604;&hellip;</span></div>
+    <h1>☀️ Sawan Pracharak Hospital — Solar Dashboard</h1>
+    <div class="status" id="status"><span class="dot"></span><span id="statusText">กำลังโหลด…</span></div>
   </header>
 
-  <div class="grid">
-    <div class="card accent">
-      <div class="label">&#3585;&#3635;&#3621;&#3633;&#3591;&#3652;&#3615;&#3615;&#3657;&#3634;&#3649;&#3610;&#3610;&#3648;&#3619;&#3637;&#3618;&#3621;&#3652;&#3607;&#3617;&#3660;</div>
-      <div class="value" id="v-pv">&ndash;<span class="unit">kW</span></div>
+  <!-- Flow diagram: solar panel → (home / grid), mirrors the iSolarCloud overview card -->
+  <div class="panel flow-card">
+    <div class="flow-diagram">
+      <svg viewBox="0 0 360 220" preserveAspectRatio="none">
+        <polyline points="180,50 180,110" stroke="#c9d3ce" stroke-width="2" fill="none"/>
+        <polyline points="55,110 305,110" stroke="#c9d3ce" stroke-width="2" fill="none"/>
+        <polyline points="55,110 55,170" stroke="#c9d3ce" stroke-width="2" fill="none"/>
+        <polyline points="305,110 305,170" stroke="#c9d3ce" stroke-width="2" fill="none"/>
+      </svg>
+      <div class="flow-node node-solar">
+        <svg class="icon" viewBox="0 0 48 48"><rect x="6" y="10" width="36" height="24" rx="2" fill="#fcd88a" stroke="#d4880a" stroke-width="1.5"/><line x1="6" y1="18" x2="42" y2="18" stroke="#d4880a" stroke-width="1"/><line x1="6" y1="26" x2="42" y2="26" stroke="#d4880a" stroke-width="1"/><line x1="18" y1="10" x2="18" y2="34" stroke="#d4880a" stroke-width="1"/><line x1="30" y1="10" x2="30" y2="34" stroke="#d4880a" stroke-width="1"/><line x1="24" y1="34" x2="24" y2="42" stroke="#8a8a8a" stroke-width="2"/></svg>
+        <div class="node-value" id="v-pv-node">– kW</div>
+      </div>
+      <div class="flow-node node-home">
+        <svg class="icon" viewBox="0 0 48 48"><polygon points="24,6 44,22 44,42 4,42 4,22" fill="#eef1ef" stroke="#8a978f" stroke-width="1.5"/><rect x="18" y="26" width="12" height="16" fill="#fff" stroke="#8a978f" stroke-width="1"/></svg>
+        <div class="node-value" id="v-home-node">– MW</div>
+        <div class="node-label">โหลด (บ้าน)</div>
+      </div>
+      <div class="flow-node node-grid">
+        <svg class="icon" viewBox="0 0 48 48"><polygon points="24,4 32,20 40,20 30,44 24,30 18,44 8,20 16,20" fill="#dbe6f7" stroke="#4a7fd6" stroke-width="1.5"/></svg>
+        <div class="node-value" id="v-grid-node">– MW</div>
+        <div class="node-label">กริด (การไฟฟ้า)</div>
+      </div>
     </div>
-    <div class="card">
-      <div class="label">&#3585;&#3635;&#3621;&#3633;&#3591;&#3652;&#3615;&#3615;&#3657;&#3634;&#3607;&#3637;&#3656;&#3605;&#3636;&#3604;&#3605;&#3633;&#3657;&#3591;</div>
-      <div class="value" id="v-cap">&ndash;<span class="unit">kWp</span></div>
+    <div class="flow-stats">
+      <div>
+        <div class="label">กำลังไฟฟ้าแบบเรียลไทม์</div>
+        <div class="value accent" id="v-pv">–<span class="unit">kW</span></div>
+      </div>
+      <div>
+        <div class="label">กำลังไฟฟ้าที่ติดตั้ง</div>
+        <div class="value" id="v-cap">–<span class="unit">kWp</span></div>
+      </div>
+      <div>
+        <div class="label">PR โรงไฟฟ้า</div>
+        <div class="value" id="v-pr">–<span class="unit">%</span></div>
+      </div>
     </div>
-    <div class="card">
-      <div class="label">PR &#3650;&#3619;&#3591;&#3652;&#3615;&#3615;&#3657;&#3634;</div>
-      <div class="value" id="v-pr">&ndash;<span class="unit">%</span></div>
+  </div>
+
+  <!-- Daily energy summary bar -->
+  <div class="summary-bar">
+    <div class="cell">
+      <div class="label">การวิเคราะห์พลังงาน</div>
+      <div class="value" id="v-balance">–<span class="unit">MWh</span></div>
     </div>
-    <div class="card">
-      <div class="label">&#3585;&#3634;&#3619;&#3612;&#3621;&#3636;&#3605; (&#3623;&#3633;&#3609;&#3609;&#3637;&#3657;)</div>
-      <div class="value" id="v-prod">&ndash;<span class="unit">kWh</span></div>
+    <div class="cell">
+      <div class="label">การผลิต</div>
+      <div class="value" id="v-prod">–<span class="unit">kWh</span></div>
     </div>
-    <div class="card">
-      <div class="label">&#3585;&#3634;&#3619;&#3651;&#3594;&#3657;&#3614;&#3621;&#3633;&#3591;&#3591;&#3634;&#3609; (&#3623;&#3633;&#3609;&#3609;&#3637;&#3657;)</div>
-      <div class="value" id="v-cons">&ndash;<span class="unit">MWh</span></div>
+    <div class="cell">
+      <div class="label">การใช้พลังงาน</div>
+      <div class="value" id="v-cons">–<span class="unit">MWh</span></div>
     </div>
-    <div class="card">
-      <div class="label">&#3619;&#3634;&#3618;&#3652;&#3604;&#3657;&#3626;&#3640;&#3607;&#3608;&#3636; (&#3623;&#3633;&#3609;&#3609;&#3637;&#3657;)</div>
-      <div class="value" id="v-rev">&ndash;<span class="unit">&#3616;&#3634;&#3607;</span></div>
+    <div class="cell">
+      <div class="label">รายได้สุทธิ</div>
+      <div class="value" id="v-rev">–<span class="unit">บาท</span></div>
     </div>
   </div>
 
   <div class="panel">
-    <h2>&#3585;&#3635;&#3621;&#3633;&#3591;&#3652;&#3615;&#3615;&#3657;&#3634; PV &#3618;&#3657;&#3629;&#3609;&#3627;&#3621;&#3633;&#3591; (&#3611;&#3619;&#3632;&#3617;&#3634;&#3603; 24 &#3594;&#3633;&#3656;&#3623;&#3650;&#3617;&#3591; &#3607;&#3640;&#3585; 5 &#3609;&#3634;&#3607;&#3637;)</h2>
+    <h2>กำลังไฟฟ้าย้อนหลัง (ประมาณ 24 ชั่วโมง ทุก 5 นาที)</h2>
     <div id="chart"></div>
+    <div class="legend-row">
+      <span><span class="dot" style="background:var(--pv-color)"></span>PV</span>
+      <span><span class="dot" style="background:var(--grid-color)"></span>กริด</span>
+      <span><span class="dot" style="background:var(--load-color)"></span>โหลด</span>
+    </div>
   </div>
 
   <div class="env-grid">
-    <div class="card">
-      <div class="label">&#3585;&#3634;&#3619;&#3621;&#3604; CO&#8322; (&#3626;&#3632;&#3626;&#3617;)</div>
-      <div class="value" id="v-co2">&ndash;<span class="unit">&#3605;&#3633;&#3609;</span></div>
+    <div class="env-card">
+      <div class="badge co2">☁️</div>
+      <div>
+        <div class="value" id="v-co2">–<span class="unit">ตัน</span></div>
+        <div class="label">การลด CO₂ (สะสม)</div>
+      </div>
     </div>
-    <div class="card">
-      <div class="label">&#3610;&#3633;&#3609;&#3607;&#3638;&#3585;&#3606;&#3656;&#3634;&#3609;&#3627;&#3636;&#3609;&#3617;&#3634;&#3605;&#3619;&#3600;&#3634;&#3609;</div>
-      <div class="value" id="v-coal">&ndash;<span class="unit">&#3605;&#3633;&#3609;</span></div>
+    <div class="env-card">
+      <div class="badge coal">🚚</div>
+      <div>
+        <div class="value" id="v-coal">–<span class="unit">ตัน</span></div>
+        <div class="label">บันทึกถ่านหินมาตรฐาน</div>
+      </div>
     </div>
-    <div class="card">
-      <div class="label">&#3605;&#3657;&#3609;&#3652;&#3617;&#3657;&#3607;&#3637;&#3656;&#3611;&#3621;&#3641;&#3585;&#3648;&#3607;&#3637;&#3618;&#3610;&#3648;&#3607;&#3656;&#3634;</div>
-      <div class="value" id="v-trees">&ndash;<span class="unit">&#3605;&#3657;&#3609;</span></div>
+    <div class="env-card">
+      <div class="badge trees">🌳</div>
+      <div>
+        <div class="value" id="v-trees">–<span class="unit">ต้น</span></div>
+        <div class="label">ต้นไม้ที่ปลูกเทียบเท่า</div>
+      </div>
     </div>
   </div>
 
@@ -172,9 +273,9 @@
     const STALE_AFTER_MS = 20 * 60 * 1000; // flag as stale if no new data in 20 min
 
     function fmt(n, digits) {
-      if (n === null || n === undefined || n === '') return '&ndash;';
+      if (n === null || n === undefined || n === '') return '–';
       const num = Number(n);
-      if (Number.isNaN(num)) return '&ndash;';
+      if (Number.isNaN(num)) return '–';
       return num.toLocaleString('en-US', { maximumFractionDigits: digits === undefined ? 1 : digits });
     }
 
@@ -185,23 +286,34 @@
     function renderChart(history) {
       if (!history || !history.length) return;
       const data = new google.visualization.DataTable();
-      data.addColumn('datetime', '&#3648;&#3623;&#3621;&#3634;');
-      data.addColumn('number', 'PV kW');
+      data.addColumn('datetime', 'เวลา');
+      data.addColumn('number', 'PV');
+      data.addColumn('number', 'กริด');
+      data.addColumn('number', 'โหลด');
       history.forEach(function (row) {
-        data.addRow([new Date(row.timestamp), Number(row.pv_power_kw) || 0]);
+        const pv = Number(row.pv_power_kw);
+        const grid = row.grid_exchange_mw === '' || row.grid_exchange_mw === undefined ? null : Number(row.grid_exchange_mw) * 1000;
+        const load = row.home_load_mw === '' || row.home_load_mw === undefined ? null : Number(row.home_load_mw) * 1000;
+        data.addRow([
+          new Date(row.timestamp),
+          Number.isNaN(pv) ? null : pv,
+          Number.isNaN(grid) ? null : grid,
+          Number.isNaN(load) ? null : load,
+        ]);
       });
 
       const options = {
         legend: { position: 'none' },
-        colors: ['#f5a623'],
+        colors: ['#f5a623', '#4a7fd6', '#e0b400'],
         backgroundColor: 'transparent',
         chartArea: { left: 60, top: 20, right: 20, bottom: 40, width: '100%', height: '75%' },
         hAxis: { textStyle: { color: '#6b7a72', fontSize: 11 }, gridlines: { color: '#eee' } },
         vAxis: { title: 'kW', textStyle: { color: '#6b7a72', fontSize: 11 }, titleTextStyle: { color: '#6b7a72' }, gridlines: { color: '#eee' } },
-        areaOpacity: 0.15,
         lineWidth: 2,
+        pointSize: 0,
+        interpolateNulls: true,
       };
-      const chart = new google.visualization.AreaChart(document.getElementById('chart'));
+      const chart = new google.visualization.LineChart(document.getElementById('chart'));
       chart.draw(data, options);
     }
 
@@ -210,16 +322,14 @@
       const statusText = document.getElementById('statusText');
       const lastUpdatedEl = document.getElementById('lastUpdated');
       if (!latestTimestamp) {
-        statusText.textContent = '&#3618;&#3633;&#3591;&#3652;&#3617;&#3656;&#3617;&#3637;&#3586;&#3657;&#3629;&#3617;&#3641;&#3621;';
+        statusText.textContent = 'ยังไม่มีข้อมูล';
         return;
       }
       const t = new Date(latestTimestamp);
       const ageMs = Date.now() - t.getTime();
       statusEl.classList.toggle('stale', ageMs > STALE_AFTER_MS);
-      statusText.textContent = ageMs > STALE_AFTER_MS
-        ? '&#3586;&#3657;&#3629;&#3617;&#3641;&#3621;&#3652;&#3617;&#3656;&#3629;&#3633;&#3611;&#3648;&#3604;&#3605; (&#3648;&#3585;&#3636;&#3609; 20 &#3609;&#3634;&#3607;&#3637;)'
-        : '&#3629;&#3633;&#3611;&#3648;&#3604;&#3605;&#3621;&#3656;&#3634;&#3626;&#3640;&#3604;';
-      lastUpdatedEl.textContent = '&#3629;&#3633;&#3611;&#3648;&#3604;&#3605;&#3621;&#3656;&#3634;&#3626;&#3640;&#3604;: ' + t.toLocaleString('th-TH');
+      statusText.textContent = ageMs > STALE_AFTER_MS ? 'ข้อมูลไม่อัปเดต (เกิน 20 นาที)' : 'อัปเดตล่าสุด';
+      lastUpdatedEl.textContent = 'อัปเดตล่าสุด: ' + t.toLocaleString('th-TH');
     }
 
     function refresh() {
@@ -228,14 +338,18 @@
           const latest = data.latest;
           if (latest) {
             setText('v-pv', fmt(latest.pv_power_kw, 1) + '<span class="unit">kW</span>');
+            setText('v-pv-node', fmt(latest.pv_power_kw, 1) + ' kW');
             setText('v-cap', fmt(latest.installed_capacity_kwp, 2) + '<span class="unit">kWp</span>');
             setText('v-pr', fmt(latest.pr_percent, 0) + '<span class="unit">%</span>');
+            setText('v-home-node', fmt(latest.home_load_mw, 2) + ' MW');
+            setText('v-grid-node', fmt(latest.grid_exchange_mw, 2) + ' MW');
+            setText('v-balance', fmt(latest.energy_balance_mwh, 1) + '<span class="unit">MWh</span>');
             setText('v-prod', fmt(latest.production_today, 1) + '<span class="unit">kWh</span>');
             setText('v-cons', fmt(latest.consumption_today, 1) + '<span class="unit">MWh</span>');
-            setText('v-rev', fmt(latest.net_revenue_thb, 2) + '<span class="unit">&#3616;&#3634;&#3607;</span>');
-            setText('v-co2', fmt(latest.co2_reduction_ton, 2) + '<span class="unit">&#3605;&#3633;&#3609;</span>');
-            setText('v-coal', fmt(latest.coal_saved_ton, 2) + '<span class="unit">&#3605;&#3633;&#3609;</span>');
-            setText('v-trees', fmt(latest.trees_equivalent, 0) + '<span class="unit">&#3605;&#3657;&#3609;</span>');
+            setText('v-rev', fmt(latest.net_revenue_thb, 2) + '<span class="unit">บาท</span>');
+            setText('v-co2', fmt(latest.co2_reduction_ton, 2) + '<span class="unit">ตัน</span>');
+            setText('v-coal', fmt(latest.coal_saved_ton, 2) + '<span class="unit">ตัน</span>');
+            setText('v-trees', fmt(latest.trees_equivalent, 0) + '<span class="unit">ต้น</span>');
             updateStatus(latest.timestamp);
           }
           renderChart(data.history);
