@@ -54,13 +54,15 @@ function extractNumber(text, label, unitRegexSrc) {
 // The flow-diagram's home/grid MW figures (bottom-left / bottom-right of the
 // solar-panel-to-house-to-pylon diagram) have no text label next to them in
 // the page's visible text -- unlike every other metric here, which sits next
-// to a Thai label we can anchor on. As a best-effort fallback, we take the
-// first two standalone "X.X MW" numbers on the page, in reading order.
-// Confirmed against the live dashboard (2026-08-03): the first number in
-// reading order is actually the GRID exchange figure, and the second is the
-// home/hospital load -- opposite of the left-to-right visual guess this used
-// to make. This is less reliable than the label-anchored fields above; treat
-// these two values with more skepticism.
+// to a Thai label we can anchor on. LAST-RESORT fallback only: take the
+// first two standalone "X.X MW" numbers in document.body.innerText reading
+// order. This turned out to be unreliable in practice -- which value comes
+// first in the flattened text does not consistently match which one is
+// visually home vs grid, so this has been wrong in both directions at
+// different times. main() now prefers extractHomeGridMwFromDom() (anchored
+// on actual on-screen left/right position) and only falls back to this
+// text-order guess if that fails. Treat this fallback's output with real
+// skepticism.
 function extractFirstTwoMw(text) {
   const matches = [...text.matchAll(new RegExp(NUM + '\\s*MW(?!h)', 'g'))];
   const vals = matches.map((m) => parseFloat(m[1].replace(/,/g, ''))).filter((n) => !Number.isNaN(n));
@@ -68,7 +70,7 @@ function extractFirstTwoMw(text) {
 }
 
 function parseMetrics(text) {
-  const { first: gridExchangeMw, second: homeLoadMw } = extractFirstTwoMw(text);
+  const { first: homeLoadMw, second: gridExchangeMw } = extractFirstTwoMw(text);
   return {
     // Current instantaneous PV power output
     pv_power_kw: extractNumber(text, 'กำลังไฟฟ้าแบบเรียลไทม์', 'kW'),
@@ -91,6 +93,47 @@ function parseMetrics(text) {
     home_load_mw: homeLoadMw,
     grid_exchange_mw: gridExchangeMw,
   };
+}
+
+// Resolve the home/grid MW figures by where they actually render on screen,
+// instead of guessing from text order (see extractFirstTwoMw above). The
+// flow diagram always draws the home/hospital load on the LEFT and the grid
+// exchange on the RIGHT (same layout as this project's own dashboard), so
+// finding the two standalone "X.X MW" text nodes and sorting by their
+// horizontal position gives a deterministic, layout-anchored answer instead
+// of relying on however the page happens to order them in the DOM/text.
+// Returns null (letting the caller fall back to extractFirstTwoMw) if it
+// can't find exactly two such values -- e.g. the layout changed.
+async function extractHomeGridMwFromDom(page) {
+  try {
+    const found = await page.evaluate(() => {
+      const re = /^-?[\d,]*\.?\d+\s*MW$/; // standalone "X.X MW", not "MWh"
+      const results = [];
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        const text = (node.textContent || '').trim();
+        if (!text || !re.test(text)) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const rect = range.getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) continue;
+        results.push({ text: text, x: rect.left + rect.width / 2 });
+      }
+      return results;
+    });
+
+    if (found.length !== 2) return null;
+
+    found.sort((a, b) => a.x - b.x);
+    const parse = (s) => parseFloat(s.replace(/MW/i, '').replace(/,/g, '').trim());
+    const homeLoadMw = parse(found[0].text);
+    const gridExchangeMw = parse(found[1].text);
+    if (Number.isNaN(homeLoadMw) || Number.isNaN(gridExchangeMw)) return null;
+    return { homeLoadMw, gridExchangeMw };
+  } catch (e) {
+    return null;
+  }
 }
 
 // Dismiss the cookie-consent banner if it's showing, so it doesn't cover the
@@ -200,6 +243,19 @@ async function main() {
 
   const text = await page.evaluate(() => document.body.innerText);
   const metrics = parseMetrics(text);
+
+  // Prefer resolving home/grid MW by on-screen position (left = home, right
+  // = grid) -- see extractHomeGridMwFromDom() above. This overrides the
+  // text-order guess already in `metrics` when it succeeds; the text-order
+  // guess only stays as a fallback for when the DOM read fails outright.
+  const domHomeGrid = await extractHomeGridMwFromDom(page);
+  if (domHomeGrid) {
+    metrics.home_load_mw = domHomeGrid.homeLoadMw;
+    metrics.grid_exchange_mw = domHomeGrid.gridExchangeMw;
+    console.log('Resolved home/grid MW by on-screen position:', domHomeGrid);
+  } else {
+    console.warn('Could not resolve home/grid MW by on-screen position; using less-reliable text-order guess instead.');
+  }
 
   const payload = {
     secret: WEBHOOK_SECRET,
