@@ -45,6 +45,8 @@ jobs:
         working-directory: scraper
         env:
           ISOLAR_URL: ${{ secrets.ISOLAR_URL }}
+          ISOLAR_USERNAME: ${{ secrets.ISOLAR_USERNAME }}
+          ISOLAR_PASSWORD: ${{ secrets.ISOLAR_PASSWORD }}
           APPSCRIPT_URL: ${{ secrets.APPSCRIPT_URL }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
         run: npm run scrape
