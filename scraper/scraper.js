@@ -55,10 +55,12 @@ function extractNumber(text, label, unitRegexSrc) {
 // solar-panel-to-house-to-pylon diagram) have no text label next to them in
 // the page's visible text -- unlike every other metric here, which sits next
 // to a Thai label we can anchor on. As a best-effort fallback, we take the
-// first two standalone "X.X MW" numbers on the page, in reading order, and
-// assume they correspond to (home load, grid exchange) -- matching the
-// left-to-right layout of the diagram. This is less reliable than the
-// label-anchored fields above; treat these two values with more skepticism.
+// first two standalone "X.X MW" numbers on the page, in reading order.
+// Confirmed against the live dashboard (2026-08-03): the first number in
+// reading order is actually the GRID exchange figure, and the second is the
+// home/hospital load -- opposite of the left-to-right visual guess this used
+// to make. This is less reliable than the label-anchored fields above; treat
+// these two values with more skepticism.
 function extractFirstTwoMw(text) {
   const matches = [...text.matchAll(new RegExp(NUM + '\\s*MW(?!h)', 'g'))];
   const vals = matches.map((m) => parseFloat(m[1].replace(/,/g, ''))).filter((n) => !Number.isNaN(n));
@@ -66,7 +68,7 @@ function extractFirstTwoMw(text) {
 }
 
 function parseMetrics(text) {
-  const { first: homeLoadMw, second: gridExchangeMw } = extractFirstTwoMw(text);
+  const { first: gridExchangeMw, second: homeLoadMw } = extractFirstTwoMw(text);
   return {
     // Current instantaneous PV power output
     pv_power_kw: extractNumber(text, 'กำลังไฟฟ้าแบบเรียลไทม์', 'kW'),
