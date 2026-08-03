@@ -566,15 +566,22 @@
 
     function loadChart() {
       updatePeriodLabel();
-      const p = new URLSearchParams({ format: 'chart', view: chartState.view });
-      if (chartState.view === 'day') p.set('date', chartState.date);
-      if (chartState.view === 'month') { p.set('year', chartState.year); p.set('month', chartState.month); }
-      if (chartState.view === 'year') p.set('year', chartState.year);
-      p.set('_', Date.now());
+      const params = { view: chartState.view };
+      if (chartState.view === 'day') params.date = chartState.date;
+      if (chartState.view === 'month') { params.year = chartState.year; params.month = chartState.month; }
+      if (chartState.view === 'year') params.year = chartState.year;
 
-      fetch(location.pathname + '?' + p.toString(), { credentials: 'same-origin' })
-        .then(function (res) { return res.json(); })
-        .then(function (data) {
+      // Data must go through google.script.run, not a plain fetch() -- Apps
+      // Script HtmlService pages are actually rendered inside a sandboxed
+      // <iframe> hosted on a completely different googleusercontent.com
+      // origin, so a relative fetch(location.pathname) never reaches this
+      // web app's doGet() at all (it silently 404s/CORS-fails against the
+      // iframe's own origin instead). google.script.run is the only channel
+      // Google provides that reliably reaches back to the server from
+      // inside that sandbox.
+      google.script.run
+        .withSuccessHandler(function (data) {
+          if (!data) return;
           if (data.view === 'day') {
             renderDayChart(data.points);
           } else if (data.view === 'month') {
@@ -583,7 +590,8 @@
             renderBarChart(data.points, function (m) { return THAI_MONTHS[Number(m) - 1].slice(0, 3); }, 'kWh/เดือน');
           }
         })
-        .catch(function (err) { console.error('loadChart failed:', err); });
+        .withFailureHandler(function (err) { console.error('loadChart failed:', err); })
+        .getChartDataForClient(params);
     }
 
     function navStep(delta) {
@@ -657,33 +665,32 @@
       }
     }
 
-    // Plain fetch() against this same web app's ?format=json endpoint, instead
-    // of google.script.run. google.script.run talks to Apps Script through an
-    // iframe/session channel that can go stale on a tab left open for a long
-    // time, silently stopping the refresh; a same-origin fetch() doesn't have
-    // that failure mode and is simpler to retry on error.
+    // Data must be pulled via google.script.run, NOT a plain fetch() against
+    // this page's own URL. Apps Script HtmlService pages are actually
+    // rendered inside a sandboxed <iframe> served from a completely
+    // different googleusercontent.com origin -- fetch(location.pathname)
+    // from inside that iframe never reaches this web app's doGet() at all,
+    // which is why the dashboard was stuck showing "-" for everything.
+    // google.script.run is the channel Google provides specifically to talk
+    // back to the server from inside that sandbox, and is what's used here.
     let consecutiveFailures = 0;
 
     function refresh() {
-      const url = location.pathname + '?format=json&_=' + Date.now();
-      fetch(url, { credentials: 'same-origin' })
-        .then(function (res) {
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          return res.json();
-        })
-        .then(function (data) {
+      google.script.run
+        .withSuccessHandler(function (data) {
           consecutiveFailures = 0;
           applyData(data);
         })
-        .catch(function (err) {
+        .withFailureHandler(function (err) {
           consecutiveFailures++;
           console.error('refresh failed (' + consecutiveFailures + '):', err);
-          // A handful of consecutive failures (e.g. the Apps Script session
-          // genuinely expired) -- a full reload gets a fresh page/session.
+          // A handful of consecutive failures (e.g. the session genuinely
+          // expired) -- a full reload gets a fresh page/session/channel.
           if (consecutiveFailures >= 5) {
             location.reload();
           }
-        });
+        })
+        .getDashboardDataForClient();
     }
 
     // Refresh immediately whenever the tab becomes visible/focused again, on
@@ -693,6 +700,12 @@
       if (document.visibilityState === 'visible') refresh();
     });
     window.addEventListener('focus', refresh);
+
+    // Extra safety net for tabs left open for a very long time: force a full
+    // page reload every 30 minutes regardless of whether refresh() has been
+    // failing, so the google.script.run channel never gets a chance to go
+    // stale in the first place.
+    setInterval(function () { location.reload(); }, 30 * 60 * 1000);
 
     google.charts.setOnLoadCallback(function () {
       refresh();
