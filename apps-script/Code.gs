@@ -250,7 +250,7 @@ function jsonResponse_(obj, statusCode) {
  * Change YOUR_SECRET_HERE, run it once, then you can delete the line.
  */
 function setup_setWebhookSecret() {
-  const YOUR_SECRET_HERE = 'change-me-to-a-random-string';
+  const YOUR_SECRET_HERE = 'sawan-solar-2569';
   PropertiesService.getScriptProperties().setProperty('WEBHOOK_SECRET', YOUR_SECRET_HERE);
   Logger.log('Webhook secret saved.');
 }
