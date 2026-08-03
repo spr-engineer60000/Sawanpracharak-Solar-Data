@@ -11,7 +11,9 @@
  * which stores it in a Google Sheet for the dashboard to display.
  *
  * Required environment variables (set as GitHub Actions secrets):
- *   ISOLAR_URL        - the full shared plant URL (the one with the long token)
+ *   ISOLAR_URL        - the full plant URL (the one with the long token)
+ *   ISOLAR_USERNAME   - iSolarCloud account username (the page requires login)
+ *   ISOLAR_PASSWORD   - iSolarCloud account password
  *   APPSCRIPT_URL     - the deployed Google Apps Script Web App URL
  *   WEBHOOK_SECRET    - shared secret string, must match Apps Script Script Property WEBHOOK_SECRET
  */
@@ -69,15 +71,65 @@ function parseMetrics(text) {
   };
 }
 
+// Dismiss the cookie-consent banner if it's showing, so it doesn't cover the
+// login form or the dashboard. Safe to call even if the banner isn't present.
+async function dismissCookieBanner(page) {
+  try {
+    const acceptBtn = page.getByText('ใช่ ฉันยอมรับ', { exact: true });
+    await acceptBtn.click({ timeout: 5000 });
+    console.log('Dismissed cookie banner.');
+  } catch (e) {
+    // Banner wasn't there / already dismissed -- fine.
+  }
+}
+
+// The iSolarCloud link requires an active login session. On a fresh browser
+// (like a GitHub Actions runner) it lands on the login page instead of the
+// plant dashboard, so log in with the account credentials first.
+async function loginIfNeeded(page, username, password) {
+  const usernameField = page.getByPlaceholder('บัญชี');
+  const isLoginPage = await usernameField.isVisible({ timeout: 8000 }).catch(() => false);
+
+  if (!isLoginPage) {
+    console.log('Already past login (session valid or login not required).');
+    return;
+  }
+
+  console.log('Login page detected; signing in...');
+  await usernameField.fill(username);
+  await page.getByPlaceholder('รหัสผ่าน').fill(password);
+
+  // Stay signed in a bit longer between runs, if the checkbox is present.
+  await page.getByText('จดจำฉัน').click({ timeout: 3000 }).catch(() => {});
+
+  await page.getByRole('button', { name: 'เข้าสู่ระบบ' }).click({ timeout: 10000 });
+
+  // Wait for the URL to move away from the login screen, i.e. login succeeded.
+  try {
+    await page.waitForFunction(
+      () => !document.body.innerText.includes('รหัสผ่านบัญชี'),
+      { timeout: 20000 }
+    );
+    console.log('Login submitted successfully.');
+  } catch (e) {
+    throw new Error(
+      'Login did not complete within 20s -- wrong credentials, or the account requires ' +
+      'extra verification (OTP/CAPTCHA) that this script cannot handle automatically.'
+    );
+  }
+}
+
 async function main() {
   const { chromium } = require('playwright');
 
   const ISOLAR_URL = process.env.ISOLAR_URL;
+  const ISOLAR_USERNAME = process.env.ISOLAR_USERNAME;
+  const ISOLAR_PASSWORD = process.env.ISOLAR_PASSWORD;
   const APPSCRIPT_URL = process.env.APPSCRIPT_URL;
   const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 
-  if (!ISOLAR_URL || !APPSCRIPT_URL || !WEBHOOK_SECRET) {
-    console.error('Missing required env vars: ISOLAR_URL, APPSCRIPT_URL, WEBHOOK_SECRET');
+  if (!ISOLAR_URL || !ISOLAR_USERNAME || !ISOLAR_PASSWORD || !APPSCRIPT_URL || !WEBHOOK_SECRET) {
+    console.error('Missing required env vars: ISOLAR_URL, ISOLAR_USERNAME, ISOLAR_PASSWORD, APPSCRIPT_URL, WEBHOOK_SECRET');
     process.exit(1);
   }
 
@@ -90,6 +142,26 @@ async function main() {
 
   console.log('Opening iSolarCloud plant page...');
   await page.goto(ISOLAR_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+  await dismissCookieBanner(page);
+
+  try {
+    await loginIfNeeded(page, ISOLAR_USERNAME, ISOLAR_PASSWORD);
+  } catch (loginErr) {
+    // Save what the login screen actually looked like so it's easier to
+    // tell wrong-password vs OTP/CAPTCHA vs something else entirely.
+    await page.screenshot({ path: 'debug-screenshot.png', fullPage: true }).catch(() => {});
+    const failText = await page.evaluate(() => document.body.innerText).catch(() => '');
+    require('fs').writeFileSync('debug-innertext.txt', failText);
+    await browser.close();
+    throw loginErr;
+  }
+
+  // After logging in, the app may have redirected to a generic home page --
+  // go back to the specific plant URL to make sure we land on the right page.
+  console.log('Navigating to plant page again (post-login)...');
+  await page.goto(ISOLAR_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await dismissCookieBanner(page);
 
   // Wait for the overview labels to actually appear (data has rendered).
   try {
