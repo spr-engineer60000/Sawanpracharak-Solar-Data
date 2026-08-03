@@ -104,6 +104,15 @@ function getDashboardDataForClient() {
   return buildDashboardData_();
 }
 
+/**
+ * Public wrapper for the day/month/year chart data, callable via
+ * google.script.run.getChartDataForClient({view, date, year, month}).
+ * See buildChartData_() for the params shape.
+ */
+function getChartDataForClient(params) {
+  return buildChartData_(params || {});
+}
+
 function buildDashboardData_() {
   const sheet = getOrCreateSheet_();
   const lastRow = sheet.getLastRow();
@@ -241,7 +250,7 @@ function jsonResponse_(obj, statusCode) {
  * Change YOUR_SECRET_HERE, run it once, then you can delete the line.
  */
 function setup_setWebhookSecret() {
-  const YOUR_SECRET_HERE = 'sawan-solar-2569';
+  const YOUR_SECRET_HERE = 'change-me-to-a-random-string';
   PropertiesService.getScriptProperties().setProperty('WEBHOOK_SECRET', YOUR_SECRET_HERE);
   Logger.log('Webhook secret saved.');
 }
