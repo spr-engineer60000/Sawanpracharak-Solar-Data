@@ -1,0 +1,60 @@
+name: Scrape iSolarCloud dashboard
+
+on:
+  schedule:
+    # GitHub's scheduler is best-effort and can drift a few minutes under load,
+    # but this asks for a run every 5 minutes, all day.
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: scraper
+        run: npm install
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('scraper/package.json') }}
+
+      - name: Install Chromium for Playwright
+        working-directory: scraper
+        run: npx playwright install --with-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+
+      - name: Install Chromium OS deps only (cache hit)
+        working-directory: scraper
+        run: npx playwright install-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+
+      - name: Run scraper
+        working-directory: scraper
+        env:
+          ISOLAR_URL: ${{ secrets.ISOLAR_URL }}
+          APPSCRIPT_URL: ${{ secrets.APPSCRIPT_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: npm run scrape
+
+      - name: Upload debug artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-artifacts
+          path: |
+            scraper/debug-screenshot.png
+            scraper/debug-innertext.txt
+          if-no-files-found: ignore
