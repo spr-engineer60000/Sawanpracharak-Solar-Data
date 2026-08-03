@@ -51,7 +51,22 @@ function extractNumber(text, label, unitRegexSrc) {
   return null;
 }
 
+// The flow-diagram's home/grid MW figures (bottom-left / bottom-right of the
+// solar-panel-to-house-to-pylon diagram) have no text label next to them in
+// the page's visible text -- unlike every other metric here, which sits next
+// to a Thai label we can anchor on. As a best-effort fallback, we take the
+// first two standalone "X.X MW" numbers on the page, in reading order, and
+// assume they correspond to (home load, grid exchange) -- matching the
+// left-to-right layout of the diagram. This is less reliable than the
+// label-anchored fields above; treat these two values with more skepticism.
+function extractFirstTwoMw(text) {
+  const matches = [...text.matchAll(new RegExp(NUM + '\\s*MW(?!h)', 'g'))];
+  const vals = matches.map((m) => parseFloat(m[1].replace(/,/g, ''))).filter((n) => !Number.isNaN(n));
+  return { first: vals[0] ?? null, second: vals[1] ?? null };
+}
+
 function parseMetrics(text) {
+  const { first: homeLoadMw, second: gridExchangeMw } = extractFirstTwoMw(text);
   return {
     // Current instantaneous PV power output
     pv_power_kw: extractNumber(text, 'กำลังไฟฟ้าแบบเรียลไทม์', 'kW'),
@@ -64,10 +79,15 @@ function parseMetrics(text) {
     production_today: extractNumber(text, 'การผลิต', 'kWh|MWh'),
     consumption_today: extractNumber(text, 'การใช้พลังงาน', 'kWh|MWh'),
     net_revenue_thb: extractNumber(text, 'รายได้สุทธิ', 'บาท'),
-    // Cumulative environmental benefit
-    co2_reduction_ton: extractNumber(text, 'การลด CO2', 'ตัน'),
+    // Cumulative environmental benefit. The site renders "CO2" with a
+    // Unicode subscript-2 (CO₂) in this card, unlike a plain "2" elsewhere,
+    // so anchor on "การลด CO" without the digit to match either form.
+    co2_reduction_ton: extractNumber(text, 'การลด CO', 'ตัน'),
     coal_saved_ton: extractNumber(text, 'บันทึกถ่านหินมาตรฐาน', 'ตัน'),
     trees_equivalent: extractNumber(text, 'ต้นไม้ที่ปลูกเทียบเท่า', 'ต้นไม้'),
+    // Flow-diagram figures (best-effort, see extractFirstTwoMw above)
+    home_load_mw: homeLoadMw,
+    grid_exchange_mw: gridExchangeMw,
   };
 }
 
@@ -192,6 +212,9 @@ async function main() {
   if (missing.length) {
     console.warn('Warning: could not parse these fields (page layout may have changed):', missing.join(', '));
   }
+  // home_load_mw / grid_exchange_mw are a best-effort, unlabeled heuristic
+  // (see extractFirstTwoMw) -- don't let them alone trip the failure check.
+  const criticalMissing = missing.filter((k) => k !== 'home_load_mw' && k !== 'grid_exchange_mw');
 
   console.log('Posting to Apps Script webhook...');
   const res = await fetch(APPSCRIPT_URL, {
@@ -215,11 +238,11 @@ async function main() {
   // Data was posted successfully, but if too many fields failed to parse the
   // page layout may have changed -- flag the run so it's visible in the
   // Actions tab, and save debug artifacts to help fix the regex patterns.
-  if (missing.length > 3) {
+  if (criticalMissing.length > 3) {
     await page.screenshot({ path: 'debug-screenshot.png', fullPage: true }).catch(() => {});
     require('fs').writeFileSync('debug-innertext.txt', text);
     await browser.close();
-    console.error(`${missing.length} of ${Object.keys(metrics).length} fields failed to parse; see debug artifacts.`);
+    console.error(`${criticalMissing.length} of ${Object.keys(metrics).length} fields failed to parse; see debug artifacts.`);
     process.exit(1);
   }
 
