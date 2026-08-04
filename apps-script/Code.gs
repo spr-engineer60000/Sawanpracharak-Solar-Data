@@ -159,9 +159,12 @@ function buildChartData_(params) {
   return buildDayChart_(rows, params);
 }
 
-function buildDayChart_(rows, params) {
-  const date = params.date || Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd');
-  const points = rows
+// Builds the point list for one calendar day, carrying every field the
+// client-side charts (balance / production / consumption / revenue -- see
+// Dashboard.html's chartState.mode) might need to plot, so a single request
+// covers all four summary-card chart views without extra round-trips.
+function dayPoints_(rows, date) {
+  return rows
     .filter(function (r) { return dateKey_(r.timestamp) === date; })
     .map(function (r) {
       return {
@@ -169,9 +172,30 @@ function buildDayChart_(rows, params) {
         pv_power_kw: r.pv_power_kw,
         grid_exchange_mw: r.grid_exchange_mw,
         home_load_mw: r.home_load_mw,
+        production_today: r.production_today,
+        consumption_today: r.consumption_today,
+        net_revenue_thb: r.net_revenue_thb,
+        energy_balance_mwh: r.energy_balance_mwh,
       };
     });
-  return { view: 'day', date: date, points: points };
+}
+
+function buildDayChart_(rows, params) {
+  const date = params.date || Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd');
+  const points = dayPoints_(rows, date);
+
+  // Also return the previous calendar day's points, time-aligned by
+  // "HH:mm", so the production/consumption/revenue chart views can draw a
+  // "เมื่อวาน" (yesterday) comparison line the same way the source site does
+  // -- without a second round-trip from the client.
+  const prevDate = Utilities.formatDate(
+    new Date(new Date(date + 'T00:00:00').getTime() - 24 * 60 * 60 * 1000),
+    TIMEZONE,
+    'yyyy-MM-dd'
+  );
+  const prevPoints = dayPoints_(rows, prevDate);
+
+  return { view: 'day', date: date, points: points, prevDate: prevDate, prevPoints: prevPoints };
 }
 
 function buildMonthChart_(rows, params) {
