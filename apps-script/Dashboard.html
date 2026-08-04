@@ -236,6 +236,17 @@
     }
     .chart-nav button:hover { background: var(--bg); }
     .chart-nav .period-label { min-width: 120px; text-align: center; font-weight: 600; color: var(--text); }
+    .chart-nav .date-picker {
+      border: 1px solid var(--border);
+      background: var(--card);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 13px;
+      font-family: inherit;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .chart-nav .date-picker:hover { background: var(--bg); }
 
     /* ---- Environmental impact cards ---- */
     .section-title {
@@ -399,9 +410,8 @@
     <div class="chart-subtitle" id="chartSubtitle">แกน X แสดงเวลา &nbsp;·&nbsp; แกน Y แสดงพลังงานไฟฟ้า หน่วยเป็น MW</div>
     <div class="chart-header">
       <div class="chart-nav">
-        <button type="button" id="navPrev">&#8249;</button>
+        <input type="date" id="datePicker" class="date-picker" />
         <span class="period-label" id="periodLabel">–</span>
-        <button type="button" id="navNext">&#8250;</button>
       </div>
     </div>
     <div id="chart"></div>
@@ -677,6 +687,8 @@
       const el = document.getElementById('periodLabel');
       const d = new Date(chartState.date + 'T00:00:00');
       el.textContent = d.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+      const picker = document.getElementById('datePicker');
+      if (picker.value !== chartState.date) picker.value = chartState.date;
     }
 
     function loadChart() {
@@ -706,15 +718,17 @@
         .getChartDataForClient(params);
     }
 
-    function navStep(delta) {
-      const d = new Date(chartState.date + 'T00:00:00');
-      d.setDate(d.getDate() + delta);
-      chartState.date = d.toISOString().slice(0, 10);
+    // Date picker replaces the old prev/next arrow buttons -- pick any day
+    // directly instead of having to click through one day at a time (which
+    // also made it easy to accidentally land on a day before the scraper
+    // had any data and see a blank chart with no obvious way back).
+    const datePickerEl = document.getElementById('datePicker');
+    datePickerEl.max = todayBangkokStr(); // no data for future dates
+    datePickerEl.addEventListener('change', function () {
+      if (!datePickerEl.value) return; // ignore an empty/cleared picker
+      chartState.date = datePickerEl.value;
       loadChart();
-    }
-
-    document.getElementById('navPrev').addEventListener('click', function () { navStep(-1); });
-    document.getElementById('navNext').addEventListener('click', function () { navStep(1); });
+    });
 
     function updateStatus(latestTimestamp) {
       const statusEl = document.getElementById('status');
