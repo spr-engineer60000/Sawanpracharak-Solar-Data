@@ -186,8 +186,15 @@
     .summary-bar .cell {
       padding: 16px 18px;
       border-right: 1px solid var(--border);
+      cursor: pointer;
+      transition: background-color 0.15s ease;
     }
     .summary-bar .cell:last-child { border-right: none; }
+    .summary-bar .cell:hover { background: rgba(255, 255, 255, 0.4); }
+    .summary-bar .cell.active {
+      background: rgba(255, 255, 255, 0.75);
+      box-shadow: inset 0 -3px 0 var(--pv-color);
+    }
     .summary-bar .label { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
     .summary-bar .value { font-size: 22px; font-weight: 700; }
     .summary-bar .value .unit { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 4px; }
@@ -366,28 +373,30 @@
   </div>
 
   <!-- Daily energy summary bar -->
+  <!-- Click a card to switch the chart below to that metric (like the
+       source iSolarCloud site's clickable summary cards). -->
   <div class="summary-bar">
-    <div class="cell">
+    <div class="cell active" data-mode="balance">
       <div class="label">การวิเคราะห์พลังงาน</div>
       <div class="value" id="v-balance">–<span class="unit">MWh</span></div>
     </div>
-    <div class="cell">
+    <div class="cell" data-mode="production">
       <div class="label">การผลิต</div>
       <div class="value" id="v-prod">–<span class="unit">MWh</span></div>
     </div>
-    <div class="cell">
+    <div class="cell" data-mode="consumption">
       <div class="label">การใช้พลังงาน</div>
       <div class="value" id="v-cons">–<span class="unit">MWh</span></div>
     </div>
-    <div class="cell">
+    <div class="cell" data-mode="revenue">
       <div class="label">รายได้สุทธิ</div>
       <div class="value" id="v-rev">–<span class="unit">บาท</span></div>
     </div>
   </div>
 
   <div class="panel">
-    <div class="chart-title">กราฟแสดงผลสัดส่วนการใช้พลังงาน</div>
-    <div class="chart-subtitle">แกน X แสดงเวลา &nbsp;·&nbsp; แกน Y แสดงพลังงานไฟฟ้า หน่วยเป็น MW</div>
+    <div class="chart-title" id="chartTitle">กราฟแสดงผลสัดส่วนการใช้พลังงาน</div>
+    <div class="chart-subtitle" id="chartSubtitle">แกน X แสดงเวลา &nbsp;·&nbsp; แกน Y แสดงพลังงานไฟฟ้า หน่วยเป็น MW</div>
     <div class="chart-header">
       <div class="chart-nav">
         <button type="button" id="navPrev">&#8249;</button>
@@ -435,7 +444,8 @@
   <script>
     google.charts.load('current', { packages: ['corechart'] });
 
-    const REFRESH_MS = 30000; // poll every 30s; underlying data updates ~every 5 min
+    const REFRESH_MS = 30000; // KPI tiles: poll every 30s
+    const CHART_REFRESH_MS = 15 * 60 * 1000; // chart: redraw every 15 min (matches the scrape interval)
     const STALE_AFTER_MS = 20 * 60 * 1000; // flag as stale if no new data in 20 min
 
     function fmt(n, digits) {
@@ -449,7 +459,9 @@
       document.getElementById(id).innerHTML = html;
     }
 
-    function renderDayChart(points) {
+    // Default chart view (behind the "การวิเคราะห์พลังงาน" card): PV / กริด /
+    // โหลด power for the selected day, all in MW.
+    function renderBalanceChart(points) {
       const data = new google.visualization.DataTable();
       data.addColumn('datetime', 'เวลา');
       data.addColumn('number', 'PV');
@@ -495,7 +507,122 @@
       };
       const chart = new google.visualization.LineChart(document.getElementById('chart'));
       chart.draw(data, options);
+
+      document.getElementById('chartLegend').innerHTML =
+        '<span><span class="dot" style="background:var(--pv-color)"></span>PV</span>' +
+        '<span><span class="dot" style="background:var(--grid-color)"></span>กริด</span>' +
+        '<span><span class="dot" style="background:var(--load-color)"></span>โหลด</span>';
       document.getElementById('chartLegend').style.display = 'flex';
+    }
+
+    // Config for the "click a card, chart shows that metric" views (การผลิต /
+    // การใช้พลังงาน / รายได้สุทธิ), each plotted against a same-time-of-day
+    // "เมื่อวาน" (yesterday) comparison line, matching the source site.
+    const SERIES_CONFIG = {
+      production: {
+        field: 'pv_power_kw',
+        scale: function (v) { return v / 1000; }, // kW -> MW
+        unit: 'MW',
+        numberPattern: '#,##0.00',
+        label: 'PV',
+        color: '#f5a623',
+      },
+      consumption: {
+        field: 'home_load_mw',
+        unit: 'MW',
+        numberPattern: '#,##0.00',
+        label: 'โหลด',
+        color: '#1f9d55',
+      },
+      revenue: {
+        field: 'net_revenue_thb',
+        unit: 'บาท',
+        numberPattern: '#,##0',
+        label: 'รายได้สุทธิ',
+        color: '#3f7fd1',
+      },
+    };
+    const PREV_DAY_COLOR = '#a8b6ae';
+
+    // Places a point on a fixed reference day (keeping only its wall-clock
+    // time), so "today" and "เมื่อวาน" (yesterday) series -- which come from
+    // two different calendar dates -- can share one time-of-day X axis. Uses
+    // the browser's local time getters (not manual UTC+7 math) so it lines
+    // up with how the rest of this chart already displays times -- Google's
+    // DateFormat/tooltip also render in the viewer's local time, and hospital
+    // staff viewing this are already in the Asia/Bangkok timezone.
+    function commonDayDate(iso) {
+      const d = new Date(iso);
+      return new Date(2000, 0, 1, d.getHours(), d.getMinutes(), d.getSeconds());
+    }
+
+    function buildTimeOfDayMap(points, field, scale) {
+      const map = {};
+      (points || []).forEach(function (row) {
+        const raw = row[field];
+        if (raw === '' || raw === undefined || raw === null) return;
+        const num = Number(raw);
+        if (Number.isNaN(num)) return;
+        const d = commonDayDate(row.timestamp);
+        map[d.getTime()] = scale ? scale(num) : num;
+      });
+      return map;
+    }
+
+    function renderComparisonChart(cfg, points, prevPoints) {
+      const todayMap = buildTimeOfDayMap(points, cfg.field, cfg.scale);
+      const prevMap = buildTimeOfDayMap(prevPoints, cfg.field, cfg.scale);
+      const keys = Array.from(new Set(Object.keys(todayMap).concat(Object.keys(prevMap))))
+        .map(Number)
+        .sort(function (a, b) { return a - b; });
+
+      const data = new google.visualization.DataTable();
+      data.addColumn('datetime', 'เวลา');
+      data.addColumn('number', cfg.label);
+      data.addColumn('number', cfg.label + 'เมื่อวาน');
+      keys.forEach(function (k) {
+        data.addRow([
+          new Date(k),
+          k in todayMap ? todayMap[k] : null,
+          k in prevMap ? prevMap[k] : null,
+        ]);
+      });
+
+      new google.visualization.DateFormat({ pattern: 'HH:mm' }).format(data, 0);
+      const numFormat = new google.visualization.NumberFormat({ pattern: cfg.numberPattern, suffix: ' ' + cfg.unit });
+      numFormat.format(data, 1);
+      numFormat.format(data, 2);
+
+      const options = {
+        legend: { position: 'none' },
+        colors: [cfg.color, PREV_DAY_COLOR],
+        backgroundColor: 'transparent',
+        chartArea: { left: 60, top: 20, right: 20, bottom: 40, width: '100%', height: '75%' },
+        hAxis: { textStyle: { color: '#64766d', fontSize: 11 }, gridlines: { color: '#eee' } },
+        vAxis: { title: cfg.unit, textStyle: { color: '#64766d', fontSize: 11 }, titleTextStyle: { color: '#64766d' }, gridlines: { color: '#eee' } },
+        series: {
+          0: { lineWidth: 3, pointSize: 4 },
+          1: { lineWidth: 2, pointSize: 0, lineDashStyle: [4, 4] },
+        },
+        interpolateNulls: true,
+        tooltip: { trigger: 'both' },
+      };
+      const chart = new google.visualization.LineChart(document.getElementById('chart'));
+      chart.draw(data, options);
+
+      document.getElementById('chartLegend').innerHTML =
+        '<span><span class="dot" style="background:' + cfg.color + '"></span>' + cfg.label + '</span>' +
+        '<span><span class="dot" style="background:' + PREV_DAY_COLOR + '"></span>' + cfg.label + 'เมื่อวาน</span>';
+      document.getElementById('chartLegend').style.display = 'flex';
+    }
+
+    function renderChart(mode, data) {
+      const cfg = SERIES_CONFIG[mode];
+      if (!cfg) {
+        renderBalanceChart(data.points); // 'balance' (default) or unknown mode
+        return;
+      }
+      renderComparisonChart(cfg, data.points, data.prevPoints);
     }
 
     // ---- Day chart navigation state (day view only -- no month/year) ----
@@ -508,7 +635,43 @@
     }
     const chartState = {
       date: todayBangkokStr(),
+      mode: 'balance', // 'balance' | 'production' | 'consumption' | 'revenue'
     };
+
+    // Chart title/subtitle shown above the graph for each summary-card mode.
+    const CHART_MODE_TEXT = {
+      balance: {
+        title: 'กราฟแสดงผลสัดส่วนการใช้พลังงาน',
+        subtitle: 'แกน X แสดงเวลา &nbsp;·&nbsp; แกน Y แสดงพลังงานไฟฟ้า หน่วยเป็น MW',
+      },
+      production: {
+        title: 'กราฟแสดงการผลิตพลังงาน (PV)',
+        subtitle: 'แกน X แสดงเวลา &nbsp;·&nbsp; แกน Y แสดงกำลังไฟฟ้าที่ผลิตได้ หน่วยเป็น MW &nbsp;·&nbsp; เทียบกับเมื่อวาน',
+      },
+      consumption: {
+        title: 'กราฟแสดงการใช้พลังงาน (โหลด)',
+        subtitle: 'แกน X แสดงเวลา &nbsp;·&nbsp; แกน Y แสดงพลังงานไฟฟ้าที่ใช้ หน่วยเป็น MW &nbsp;·&nbsp; เทียบกับเมื่อวาน',
+      },
+      revenue: {
+        title: 'กราฟแสดงรายได้สุทธิสะสม',
+        subtitle: 'แกน X แสดงเวลา &nbsp;·&nbsp; แกน Y แสดงรายได้สุทธิสะสม หน่วยเป็นบาท &nbsp;·&nbsp; เทียบกับเมื่อวาน',
+      },
+    };
+
+    // Click a summary card to switch the chart below to that metric.
+    function selectChartMode(mode) {
+      if (!CHART_MODE_TEXT[mode] || chartState.mode === mode) return;
+      chartState.mode = mode;
+      document.querySelectorAll('.summary-bar .cell').forEach(function (el) {
+        el.classList.toggle('active', el.getAttribute('data-mode') === mode);
+      });
+      document.getElementById('chartTitle').textContent = CHART_MODE_TEXT[mode].title;
+      document.getElementById('chartSubtitle').innerHTML = CHART_MODE_TEXT[mode].subtitle;
+      loadChart();
+    }
+    document.querySelectorAll('.summary-bar .cell').forEach(function (el) {
+      el.addEventListener('click', function () { selectChartMode(el.getAttribute('data-mode')); });
+    });
 
     function updatePeriodLabel() {
       const el = document.getElementById('periodLabel');
@@ -531,7 +694,13 @@
       google.script.run
         .withSuccessHandler(function (data) {
           if (!data) return;
-          renderDayChart(data.points);
+          // Same grid-can-never-exceed-load self-correction as applyData()
+          // (see fixHomeGridSwap below) -- applied per-point here so older
+          // history rows collected before the scraper-side fix don't still
+          // show a swapped โหลด/กริด in the chart.
+          data.points = (data.points || []).map(fixHomeGridSwap);
+          data.prevPoints = (data.prevPoints || []).map(fixHomeGridSwap);
+          renderChart(chartState.mode, data);
         })
         .withFailureHandler(function (err) { console.error('loadChart failed:', err); })
         .getChartDataForClient(params);
@@ -562,8 +731,26 @@
       lastUpdatedEl.textContent = 'อัปเดตล่าสุด: ' + t.toLocaleString('th-TH');
     }
 
+    // Grid exchange can never exceed home load for this plant -- confirmed
+    // operating assumption (no battery/export; everything the hospital
+    // draws comes from PV generation plus grid import, so PV/Load% +
+    // Grid/Load% should sum to ~100%, and grid_exchange_mw < home_load_mw
+    // always). The scraper already resolves these two the same way (see
+    // scraper.js's extractHomeGridMwFromDom), but if it ever still comes out
+    // backwards for some row, self-correct here too as a second line of
+    // defense before displaying anything.
+    function fixHomeGridSwap(row) {
+      if (!row) return row;
+      const grid = Number(row.grid_exchange_mw);
+      const load = Number(row.home_load_mw);
+      if (!Number.isNaN(grid) && !Number.isNaN(load) && grid > load) {
+        return Object.assign({}, row, { home_load_mw: grid, grid_exchange_mw: load });
+      }
+      return row;
+    }
+
     function applyData(data) {
-      const latest = data.latest;
+      const latest = fixHomeGridSwap(data.latest);
       if (latest) {
         setText('v-pv', fmt(latest.pv_power_kw, 1) + '<span class="unit">kW</span>');
         setText('v-pv-node', fmt(latest.pv_power_kw, 1) + ' kW');
@@ -580,12 +767,19 @@
         setText('v-trees', fmt(latest.trees_equivalent, 0) + '<span class="unit">trees</span>');
         updateStatus(latest.timestamp);
 
-        // PV/load and grid/load ratios, all converted to kW for a fair comparison.
+        // PV/load and grid/load ratios. These two MUST always sum to exactly
+        // 100% -- this plant has no battery/export, so everything the
+        // hospital draws (home load) comes from PV generation plus grid
+        // import, nothing else. Computing gridLoadPct independently from
+        // grid_exchange_mw (as a separate reading, possibly captured a few
+        // seconds off from the PV/load reading) could land on 99% or 101%
+        // instead of exactly 100 -- so derive it as the complement of
+        // pvLoadPct instead of as its own independent ratio, which
+        // guarantees the two always add up to exactly 100%.
         const pvKw = Number(latest.pv_power_kw);
         const loadKw = Number(latest.home_load_mw) * 1000;
-        const gridKw = Number(latest.grid_exchange_mw) * 1000;
         const pvLoadPct = loadKw > 0 && !Number.isNaN(pvKw) ? (pvKw / loadKw) * 100 : null;
-        const gridLoadPct = loadKw > 0 && !Number.isNaN(gridKw) ? (gridKw / loadKw) * 100 : null;
+        const gridLoadPct = pvLoadPct === null ? null : 100 - pvLoadPct;
         setText('v-pv-load-ratio', fmt(pvLoadPct, 0) + '<span class="unit">%</span>');
         setText('v-grid-load-ratio', fmt(gridLoadPct, 0) + '<span class="unit">%</span>');
       }
@@ -623,9 +817,15 @@
     // top of the regular timer -- covers the tab having been backgrounded
     // (browsers throttle setInterval in hidden tabs) and laptop sleep/wake.
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'visible') refresh();
+      if (document.visibilityState === 'visible') {
+        refresh();
+        loadChart();
+      }
     });
-    window.addEventListener('focus', refresh);
+    window.addEventListener('focus', function () {
+      refresh();
+      loadChart();
+    });
 
     // Extra safety net for tabs left open for a very long time: force a full
     // page reload every 30 minutes regardless of whether refresh() has been
@@ -637,6 +837,12 @@
       refresh();
       loadChart();
       setInterval(refresh, REFRESH_MS);
+      // Chart isn't covered by refresh() -- without this it only ever loads
+      // once (page load) or when the user clicks nav/card buttons. This
+      // keeps it auto-updating with new data every 15 minutes on its own,
+      // same as the KPI tiles already do (just on a slower cadence, since
+      // the underlying data only changes ~every 15 min now -- see scrape.yml).
+      setInterval(loadChart, CHART_REFRESH_MS);
     });
   </script>
 </body>
