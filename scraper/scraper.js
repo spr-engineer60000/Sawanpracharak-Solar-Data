@@ -69,6 +69,60 @@ function extractFirstTwoMw(text) {
   return { first: vals[0] ?? null, second: vals[1] ?? null };
 }
 
+// Anchored variant of extractNumber(), for metrics whose unit isn't fixed
+// (see extractNumberNormalized below). extractNumber()'s forward match scans
+// the *whole* CONTEXT_CHARS window after the label for the first NUM+unit
+// occurrence -- fine when the unit pattern covers every unit that value
+// could ever render in, but if a caller only searches for e.g. "kWh" and
+// the number actually rendered as "MWh" this time, that loose scan walks
+// straight past it and can latch onto a completely different label's "kWh"
+// value later in the window. Anchoring the match to *immediately* after the
+// label (only whitespace in between) avoids that ambiguity, and reports
+// which unit token was actually found alongside the number.
+//
+// If the label's FIRST occurrence in the page text isn't immediately
+// followed by a number (e.g. it's also a substring of some other heading or
+// menu text elsewhere on the page, appearing earlier in reading order than
+// the actual metric card), an anchored match against only that first
+// occurrence would find nothing and wrongly return null -- so this tries
+// every occurrence of the label in turn until one is immediately followed
+// by a NUM+unit match.
+function extractNumberAndUnit(text, label, unitRegexSrc) {
+  const re = new RegExp('^\\s*' + NUM + '\\s*(' + unitRegexSrc + ')');
+  let searchFrom = 0;
+  for (;;) {
+    const idx = text.indexOf(label, searchFrom);
+    if (idx === -1) return null;
+    const after = text.slice(idx + label.length, idx + label.length + CONTEXT_CHARS);
+    const m = after.match(re);
+    if (m) {
+      const n = parseFloat(m[1].replace(/,/g, ''));
+      if (!Number.isNaN(n)) return { value: n, unit: m[2] };
+    }
+    searchFrom = idx + label.length;
+  }
+}
+
+// The site auto-switches "การผลิต" (production_today) and "การใช้พลังงาน"
+// (consumption_today) between kWh and MWh depending on magnitude at scrape
+// time -- e.g. "697.3 kWh" early in the day vs "1.5 MWh" later once it
+// crosses 1 MWh. The old extractNumber(text, label, 'kWh|MWh') call only
+// captured the number, not which unit token actually matched, so whenever
+// the site rendered "MWh" the raw number got treated as if it were 1000x
+// smaller than it really is (e.g. "1.5 MWh" stored as 1.5 instead of 1500),
+// which is why production_today showed up as ~0 after Dashboard.html divides
+// it by 1000. This finds whichever unit was actually rendered (via the
+// anchored extractNumberAndUnit above) and normalizes it back to a single
+// fixed base unit -- 'kWh' for production_today, 'MWh' for consumption_today,
+// matching what Dashboard.html already expects each field to be stored in --
+// so the displayed value is correct regardless of which unit the page used.
+function extractNumberNormalized(text, label, nativeUnit) {
+  const found = extractNumberAndUnit(text, label, 'kWh|MWh');
+  if (!found) return null;
+  const valueInKwh = /mwh/i.test(found.unit) ? found.value * 1000 : found.value;
+  return nativeUnit === 'kWh' ? valueInKwh : valueInKwh / 1000;
+}
+
 function parseMetrics(text) {
   const { first: homeLoadMw, second: gridExchangeMw } = extractFirstTwoMw(text);
   return {
@@ -80,8 +134,8 @@ function parseMetrics(text) {
     pr_percent: extractNumber(text, 'PR โรงไฟฟ้า', '%'),
     // Today's energy balance / production / consumption / revenue
     energy_balance_mwh: extractNumber(text, 'การวิเคราะห์พลังงาน', 'MWh'),
-    production_today: extractNumber(text, 'การผลิต', 'kWh|MWh'),
-    consumption_today: extractNumber(text, 'การใช้พลังงาน', 'kWh|MWh'),
+    production_today: extractNumberNormalized(text, 'การผลิต', 'kWh'),
+    consumption_today: extractNumberNormalized(text, 'การใช้พลังงาน', 'MWh'),
     net_revenue_thb: extractNumber(text, 'รายได้สุทธิ', 'บาท'),
     // Cumulative environmental benefit. The site renders "CO2" with a
     // Unicode subscript-2 (CO₂) in this card, unlike a plain "2" elsewhere,
@@ -95,16 +149,26 @@ function parseMetrics(text) {
   };
 }
 
-// Resolve the home/grid MW figures by where they actually render on screen,
-// instead of guessing from text order (see extractFirstTwoMw above). The
-// flow diagram always draws the home/hospital load on the LEFT and the grid
-// exchange on the RIGHT (same layout as this project's own dashboard), so
-// finding the two standalone "X.X MW" text nodes and sorting by their
-// horizontal position gives a deterministic, layout-anchored answer instead
-// of relying on however the page happens to order them in the DOM/text.
-// Returns null (letting the caller fall back to extractFirstTwoMw) if it
-// can't find exactly two such values -- e.g. the layout changed.
-async function extractHomeGridMwFromDom(page) {
+// Resolve the home/grid MW figures. Two earlier versions of this tried to
+// infer which value is which from where they render on screen (first exact
+// text order, then "leftmost = home, rightmost = grid" DOM position) -- both
+// turned out to be unreliable: real side-by-side screenshots taken only ~3
+// minutes apart, of an essentially unchanged real-world state, came back
+// with the two values on OPPOSITE sides between one scrape and the next. So
+// on-screen position for this pair just isn't a stable signal at all --
+// don't use it for the assignment (only for finding the right *pair* of
+// numbers among any other stray "X.X MW" text on the page).
+//
+// Instead, use basic energy balance, which the plant owner confirmed
+// directly: this plant has no battery/export, so everything the hospital
+// draws (home load) comes from PV generation plus grid import --
+// i.e. pv_power + grid_exchange should equal home_load (equivalently, the
+// dashboard's "PV/โหลด %" and "กริด/โหลด %" ratios should sum to ~100%, and
+// grid_exchange should always be smaller than home_load). Given the two
+// candidate readouts, try both possible (home, grid) assignments and keep
+// whichever one actually balances -- that's a physical constraint, not a
+// guess, so it's stable regardless of how the page happens to lay things out.
+async function extractHomeGridMwFromDom(page, pvPowerKw) {
   try {
     const found = await page.evaluate(() => {
       const re = /^-?[\d,]*\.?\d+\s*MW$/; // standalone "X.X MW", not "MWh"
@@ -118,19 +182,36 @@ async function extractHomeGridMwFromDom(page) {
         range.selectNodeContents(node);
         const rect = range.getBoundingClientRect();
         if (rect.width === 0 && rect.height === 0) continue;
-        results.push({ text: text, x: rect.left + rect.width / 2 });
+        results.push({ text: text, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
       }
       return results;
     });
 
-    if (found.length !== 2) return null;
+    if (found.length < 2) return null;
 
-    found.sort((a, b) => a.x - b.x);
+    // Still cluster by Y first, to throw out any stray "X.X MW" text
+    // elsewhere on the page (e.g. an inline label along the connecting
+    // line) and keep only the row the two big home/grid readouts sit in.
+    const Y_TOLERANCE = 20; // px; matches within this band count as the same row
+    const byY = [...found].sort((a, b) => b.y - a.y); // bottommost first
+    const bottomY = byY[0].y;
+    const cluster = byY.filter((f) => Math.abs(f.y - bottomY) <= Y_TOLERANCE);
+    if (cluster.length < 2) return null;
+
     const parse = (s) => parseFloat(s.replace(/MW/i, '').replace(/,/g, '').trim());
-    const homeLoadMw = parse(found[0].text);
-    const gridExchangeMw = parse(found[1].text);
-    if (Number.isNaN(homeLoadMw) || Number.isNaN(gridExchangeMw)) return null;
-    return { homeLoadMw, gridExchangeMw };
+    const values = cluster.map((c) => parse(c.text)).filter((n) => !Number.isNaN(n));
+    if (values.length < 2) return null;
+
+    // If more than 2 values somehow land in that row, the two extremes are
+    // still the most likely candidates for the real readouts.
+    const a = values.length === 2 ? values[0] : Math.max(...values);
+    const b = values.length === 2 ? values[1] : Math.min(...values);
+
+    const pvMw = typeof pvPowerKw === 'number' && !Number.isNaN(pvPowerKw) ? pvPowerKw / 1000 : 0;
+    const optionA = { homeLoadMw: a, gridExchangeMw: b };
+    const optionB = { homeLoadMw: b, gridExchangeMw: a };
+    const residual = (opt) => Math.abs(pvMw + opt.gridExchangeMw - opt.homeLoadMw);
+    return residual(optionA) <= residual(optionB) ? optionA : optionB;
   } catch (e) {
     return null;
   }
@@ -244,18 +325,28 @@ async function main() {
   const text = await page.evaluate(() => document.body.innerText);
   const metrics = parseMetrics(text);
 
-  // Prefer resolving home/grid MW by on-screen position (left = home, right
-  // = grid) -- see extractHomeGridMwFromDom() above. This overrides the
-  // text-order guess already in `metrics` when it succeeds; the text-order
-  // guess only stays as a fallback for when the DOM read fails outright.
-  const domHomeGrid = await extractHomeGridMwFromDom(page);
+  // Prefer resolving home/grid MW by energy balance (pv + grid ~= load) --
+  // see extractHomeGridMwFromDom() above. This overrides the text-order
+  // guess already in `metrics` when it succeeds; the text-order guess only
+  // stays as a fallback for when the DOM read fails outright.
+  const domHomeGrid = await extractHomeGridMwFromDom(page, metrics.pv_power_kw);
   if (domHomeGrid) {
     metrics.home_load_mw = domHomeGrid.homeLoadMw;
     metrics.grid_exchange_mw = domHomeGrid.gridExchangeMw;
-    console.log('Resolved home/grid MW by on-screen position:', domHomeGrid);
+    console.log('Resolved home/grid MW by energy balance:', domHomeGrid);
   } else {
-    console.warn('Could not resolve home/grid MW by on-screen position; using less-reliable text-order guess instead.');
+    console.warn('Could not resolve home/grid MW by energy balance; using less-reliable text-order guess instead.');
   }
+
+  // Always save a screenshot + full text dump, even on success -- this is
+  // the ONLY way to see exactly what the page rendered for a given run
+  // without waiting for an outright failure (the pass/fail check below only
+  // trips on >3 missing *critical* fields, so a single silently-wrong field
+  // like production_today never triggered a debug upload before, which is
+  // why misparses like that took several guess-and-check rounds to fix).
+  // Kept small/overwritten every run rather than versioned.
+  await page.screenshot({ path: 'debug-screenshot.png', fullPage: true }).catch(() => {});
+  require('fs').writeFileSync('debug-innertext.txt', text);
 
   const payload = {
     secret: WEBHOOK_SECRET,
@@ -286,19 +377,16 @@ async function main() {
   console.log('Webhook response body:', resText.slice(0, 500));
 
   if (!res.ok) {
-    // Save a screenshot + full text dump as build artifacts to help debugging.
-    await page.screenshot({ path: 'debug-screenshot.png', fullPage: true }).catch(() => {});
-    require('fs').writeFileSync('debug-innertext.txt', text);
+    // debug-screenshot.png / debug-innertext.txt were already written above.
     await browser.close();
     process.exit(1);
   }
 
   // Data was posted successfully, but if too many fields failed to parse the
   // page layout may have changed -- flag the run so it's visible in the
-  // Actions tab, and save debug artifacts to help fix the regex patterns.
+  // Actions tab. debug-screenshot.png / debug-innertext.txt were already
+  // written above either way.
   if (criticalMissing.length > 3) {
-    await page.screenshot({ path: 'debug-screenshot.png', fullPage: true }).catch(() => {});
-    require('fs').writeFileSync('debug-innertext.txt', text);
     await browser.close();
     console.error(`${criticalMissing.length} of ${Object.keys(metrics).length} fields failed to parse; see debug artifacts.`);
     process.exit(1);
@@ -307,7 +395,7 @@ async function main() {
   await browser.close();
 }
 
-module.exports = { extractNumber, parseMetrics };
+module.exports = { extractNumber, parseMetrics, extractHomeGridMwFromDom };
 
 if (require.main === module) {
   main().catch((err) => {
