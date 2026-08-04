@@ -210,23 +210,11 @@
     .chart-header {
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      justify-content: center;
       flex-wrap: wrap;
       gap: 10px;
       margin-bottom: 14px;
     }
-    .chart-tabs { display: flex; gap: 4px; background: var(--bg); border-radius: 10px; padding: 3px; }
-    .chart-tabs button {
-      border: none;
-      background: transparent;
-      font: inherit;
-      font-size: 13px;
-      color: var(--muted);
-      padding: 6px 14px;
-      border-radius: 8px;
-      cursor: pointer;
-    }
-    .chart-tabs button.active { background: var(--card); color: var(--brand-green-dark); font-weight: 700; box-shadow: 0 1px 3px rgba(22,33,28,0.1); }
     .chart-nav { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
     .chart-nav button {
       border: 1px solid var(--border);
@@ -401,11 +389,6 @@
     <div class="chart-title">กราฟแสดงผลสัดส่วนการใช้พลังงาน</div>
     <div class="chart-subtitle">แกน X แสดงเวลา &nbsp;·&nbsp; แกน Y แสดงพลังงานไฟฟ้า หน่วยเป็น MW</div>
     <div class="chart-header">
-      <div class="chart-tabs" id="chartTabs">
-        <button type="button" data-view="day" class="active">วัน</button>
-        <button type="button" data-view="month">เดือน</button>
-        <button type="button" data-view="year">ปี</button>
-      </div>
       <div class="chart-nav">
         <button type="button" id="navPrev">&#8249;</button>
         <span class="period-label" id="periodLabel">–</span>
@@ -515,29 +498,7 @@
       document.getElementById('chartLegend').style.display = 'flex';
     }
 
-    function renderBarChart(points, axisLabelFn, valueTitle) {
-      const data = new google.visualization.DataTable();
-      data.addColumn('string', 'ช่วง');
-      data.addColumn('number', valueTitle);
-      (points || []).forEach(function (p) {
-        data.addRow([axisLabelFn(p.label), Number(p.production_kwh) || 0]);
-      });
-
-      const options = {
-        legend: { position: 'none' },
-        colors: ['#f5a623'],
-        backgroundColor: 'transparent',
-        chartArea: { left: 60, top: 20, right: 20, bottom: 50, width: '100%', height: '70%' },
-        hAxis: { textStyle: { color: '#64766d', fontSize: 11 }, gridlines: { color: 'transparent' }, slantedText: true, slantedTextAngle: 45 },
-        vAxis: { title: valueTitle, textStyle: { color: '#64766d', fontSize: 11 }, titleTextStyle: { color: '#64766d' }, gridlines: { color: '#eee' } },
-      };
-      const chart = new google.visualization.ColumnChart(document.getElementById('chart'));
-      chart.draw(data, options);
-      document.getElementById('chartLegend').style.display = 'none';
-    }
-
-    // ---- Day / month / year chart navigation state ----
-    const THAI_MONTHS = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+    // ---- Day chart navigation state (day view only -- no month/year) ----
     function todayBangkokStr() {
       // Approximate "today" in Asia/Bangkok (UTC+7) using the client clock;
       // the server-side aggregation is the source of truth either way.
@@ -546,30 +507,18 @@
       return bkk.toISOString().slice(0, 10);
     }
     const chartState = {
-      view: 'day',
       date: todayBangkokStr(),
-      year: Number(todayBangkokStr().slice(0, 4)),
-      month: Number(todayBangkokStr().slice(5, 7)),
     };
 
     function updatePeriodLabel() {
       const el = document.getElementById('periodLabel');
-      if (chartState.view === 'day') {
-        const d = new Date(chartState.date + 'T00:00:00');
-        el.textContent = d.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
-      } else if (chartState.view === 'month') {
-        el.textContent = THAI_MONTHS[chartState.month - 1] + ' ' + (chartState.year + 543);
-      } else {
-        el.textContent = String(chartState.year + 543);
-      }
+      const d = new Date(chartState.date + 'T00:00:00');
+      el.textContent = d.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
     }
 
     function loadChart() {
       updatePeriodLabel();
-      const params = { view: chartState.view };
-      if (chartState.view === 'day') params.date = chartState.date;
-      if (chartState.view === 'month') { params.year = chartState.year; params.month = chartState.month; }
-      if (chartState.view === 'year') params.year = chartState.year;
+      const params = { view: 'day', date: chartState.date };
 
       // Data must go through google.script.run, not a plain fetch() -- Apps
       // Script HtmlService pages are actually rendered inside a sandboxed
@@ -582,42 +531,19 @@
       google.script.run
         .withSuccessHandler(function (data) {
           if (!data) return;
-          if (data.view === 'day') {
-            renderDayChart(data.points);
-          } else if (data.view === 'month') {
-            renderBarChart(data.points, function (day) { return day + ' ' + THAI_MONTHS[chartState.month - 1].slice(0, 3); }, 'kWh/วัน');
-          } else if (data.view === 'year') {
-            renderBarChart(data.points, function (m) { return THAI_MONTHS[Number(m) - 1].slice(0, 3); }, 'kWh/เดือน');
-          }
+          renderDayChart(data.points);
         })
         .withFailureHandler(function (err) { console.error('loadChart failed:', err); })
         .getChartDataForClient(params);
     }
 
     function navStep(delta) {
-      if (chartState.view === 'day') {
-        const d = new Date(chartState.date + 'T00:00:00');
-        d.setDate(d.getDate() + delta);
-        chartState.date = d.toISOString().slice(0, 10);
-      } else if (chartState.view === 'month') {
-        chartState.month += delta;
-        if (chartState.month < 1) { chartState.month = 12; chartState.year--; }
-        if (chartState.month > 12) { chartState.month = 1; chartState.year++; }
-      } else {
-        chartState.year += delta;
-      }
+      const d = new Date(chartState.date + 'T00:00:00');
+      d.setDate(d.getDate() + delta);
+      chartState.date = d.toISOString().slice(0, 10);
       loadChart();
     }
 
-    document.getElementById('chartTabs').addEventListener('click', function (e) {
-      const btn = e.target.closest('button[data-view]');
-      if (!btn) return;
-      chartState.view = btn.getAttribute('data-view');
-      document.querySelectorAll('#chartTabs button').forEach(function (b) {
-        b.classList.toggle('active', b === btn);
-      });
-      loadChart();
-    });
     document.getElementById('navPrev').addEventListener('click', function () { navStep(-1); });
     document.getElementById('navNext').addEventListener('click', function () { navStep(1); });
 
