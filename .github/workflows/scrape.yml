@@ -2,13 +2,18 @@ name: Scrape iSolarCloud dashboard
 
 on:
   schedule:
-    # Runs every 15 minutes (was every 5). GitHub's scheduler is best-effort
-    # and can drift under load -- and GitHub explicitly warns that load is
-    # worst right at the top of every interval (:00, :15, :30, ...) because
-    # that's when every repo's identically-scheduled workflow fires at once.
-    # Offsetting to start at minute 3 (3,18,33,48) avoids that stampede and
-    # runs noticeably closer to on-time in practice.
-    - cron: '3-59/15 * * * *'
+    # Runs every 15 minutes (was every 5), at minutes 3/18/33/48. GitHub's
+    # scheduler is best-effort and can drift under load -- and GitHub
+    # explicitly warns that load is worst right at the top of every interval
+    # (:00, :15, :30, ...) because that's when every repo's identically-
+    # scheduled workflow fires at once. Offsetting to minute 3 avoids that
+    # stampede and runs noticeably closer to on-time in practice.
+    #
+    # Spelled out as an explicit comma list (rather than the equivalent
+    # "3-59/15 * * * *" step-range form) purely to rule out any doubt about
+    # how GitHub's cron parser handles combined range+step syntax -- both
+    # are valid POSIX cron, but this form can't be misread.
+    - cron: '3,18,33,48 * * * *'
   workflow_dispatch: {}
 
 jobs:
