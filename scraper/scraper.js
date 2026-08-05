@@ -21,34 +21,60 @@
 // Pull a number associated with a Thai/English label in the page's visible
 // text. The page's card layout isn't consistent: some cards render
 // "label\nvalue unit" (label first), others render "value\nlabel" (value
-// first, e.g. the CO2/coal/trees cards). This tries both directions:
+// first, e.g. the CO2/coal/trees cards). This tries both directions, both
+// ANCHORED to sit immediately adjacent to the label (only whitespace in
+// between), tried against every occurrence of `label` in the text in turn:
 //   1) label immediately followed by NUMBER + unit  (most metrics)
 //   2) NUMBER immediately preceding the label, no unit required (fallback,
-//      used for the value-first cards)
+//      used for the value-first cards, where the unit is embedded in the
+//      label text itself, e.g. "การลด CO₂ (ตัน)")
 // Handles thousands separators and optional leading minus sign either way.
+//
+// This used to be a much looser, unanchored scan of the whole
+// CONTEXT_CHARS window on both sides, which caused a real production bug:
+// at night this plant's real-time PV power genuinely renders as no numeric
+// text at all (it isn't producing, so there's nothing to show -- see
+// pv_power_kw's night-default below), and the old forward scan would just
+// keep walking past that empty space until it found the NEXT card's
+// number instead -- e.g. matching "999.66" from "กำลังไฟฟ้าที่ติดตั้ง
+// 999.66 kWp" (installed capacity) as if it were the real-time "kW"
+// reading, because the unit check for "kW" wasn't given a boundary and so
+// also matched as a prefix of "kWp". The old backward fallback was worse:
+// it accepted ANY number found up to 120 characters back with no adjacency
+// or unit check at all, so on any field whose value was momentarily
+// missing it could just as easily grab an unrelated number from a
+// completely different card. Anchoring both directions to "immediately
+// adjacent" removes both ambiguities, and the negative lookahead after the
+// unit stops a short unit (like "kW") from matching as a prefix of a
+// longer one (like "kWp").
 const NUM = '([\\-+]?\\d[\\d,]*\\.?\\d*)';
 const CONTEXT_CHARS = 120;
 
 function extractNumber(text, label, unitRegexSrc) {
-  const idx = text.indexOf(label);
-  if (idx === -1) return null;
+  const unit = '(?:' + unitRegexSrc + ')(?![a-zA-Zก-๙])';
+  const forwardRe = new RegExp('^\\s*' + NUM + '\\s*' + unit);
+  const backwardRe = new RegExp(NUM + '\\s*$');
+  let searchFrom = 0;
+  for (;;) {
+    const idx = text.indexOf(label, searchFrom);
+    if (idx === -1) return null;
 
-  const after = text.slice(idx + label.length, idx + label.length + CONTEXT_CHARS);
-  const forwardMatch = after.match(new RegExp(NUM + '\\s*(?:' + unitRegexSrc + ')'));
-  if (forwardMatch) {
-    const n = parseFloat(forwardMatch[1].replace(/,/g, ''));
-    if (!Number.isNaN(n)) return n;
+    const after = text.slice(idx + label.length, idx + label.length + CONTEXT_CHARS);
+    const fwd = after.match(forwardRe);
+    if (fwd) {
+      const n = parseFloat(fwd[1].replace(/,/g, ''));
+      if (!Number.isNaN(n)) return n;
+    }
+
+    const before = text.slice(Math.max(0, idx - CONTEXT_CHARS), idx);
+    const bwd = before.match(backwardRe);
+    if (bwd) {
+      const n = parseFloat(bwd[1].replace(/,/g, ''));
+      if (!Number.isNaN(n)) return n;
+    }
+
+    searchFrom = idx + label.length;
   }
-
-  const before = text.slice(Math.max(0, idx - CONTEXT_CHARS), idx);
-  const backwardMatches = [...before.matchAll(new RegExp(NUM, 'g'))];
-  if (backwardMatches.length) {
-    const last = backwardMatches[backwardMatches.length - 1];
-    const n = parseFloat(last[1].replace(/,/g, ''));
-    if (!Number.isNaN(n)) return n;
-  }
-
-  return null;
 }
 
 // The flow-diagram's home/grid MW figures (bottom-left / bottom-right of the
@@ -123,15 +149,37 @@ function extractNumberNormalized(text, label, nativeUnit) {
   return nativeUnit === 'kWh' ? valueInKwh : valueInKwh / 1000;
 }
 
+// Real-time PV power and PR are the two figures on this page that
+// genuinely go to (or near) 0 overnight -- there is no sunlight, so there
+// is nothing to produce, and the site sometimes renders no numeric text at
+// all for them in that state rather than literally "0". Physically, PV
+// output also can never legitimately reach/exceed the plant's own
+// installed (nameplate) capacity -- confirmed by the plant owner ("at
+// night solar can't produce, should be 0"). So: if extraction comes back
+// empty, or comes back implausibly high (>= installed capacity, or PR way
+// past 100%), treat it as "not producing" and report 0 rather than either
+// null or a clearly-wrong number.
+function resolvePvPowerKw_(rawPvPowerKw, installedCapacityKwp) {
+  if (rawPvPowerKw === null) return 0;
+  if (typeof installedCapacityKwp === 'number' && rawPvPowerKw >= installedCapacityKwp) return 0;
+  return rawPvPowerKw;
+}
+function resolvePrPercent_(rawPrPercent) {
+  if (rawPrPercent === null) return 0;
+  if (rawPrPercent > 105) return 0; // small headroom above 100% for rounding; anything past that is a bad parse
+  return rawPrPercent;
+}
+
 function parseMetrics(text) {
   const { first: homeLoadMw, second: gridExchangeMw } = extractFirstTwoMw(text);
+  const installedCapacityKwp = extractNumber(text, 'กำลังไฟฟ้าที่ติดตั้ง', 'kWp');
   return {
     // Current instantaneous PV power output
-    pv_power_kw: extractNumber(text, 'กำลังไฟฟ้าแบบเรียลไทม์', 'kW'),
+    pv_power_kw: resolvePvPowerKw_(extractNumber(text, 'กำลังไฟฟ้าแบบเรียลไทม์', 'kW'), installedCapacityKwp),
     // Nameplate / installed capacity
-    installed_capacity_kwp: extractNumber(text, 'กำลังไฟฟ้าที่ติดตั้ง', 'kWp'),
+    installed_capacity_kwp: installedCapacityKwp,
     // Performance ratio
-    pr_percent: extractNumber(text, 'PR โรงไฟฟ้า', '%'),
+    pr_percent: resolvePrPercent_(extractNumber(text, 'PR โรงไฟฟ้า', '%')),
     // Today's energy balance / production / consumption / revenue
     energy_balance_mwh: extractNumber(text, 'การวิเคราะห์พลังงาน', 'MWh'),
     production_today: extractNumberNormalized(text, 'การผลิต', 'kWh'),
