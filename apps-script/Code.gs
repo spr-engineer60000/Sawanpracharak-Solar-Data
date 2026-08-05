@@ -37,7 +37,33 @@ const COLUMNS = [
   'trees_equivalent',
   'home_load_mw',
   'grid_exchange_mw',
+  // Appended at the end (not next to 'timestamp') on purpose -- new columns
+  // must always go at the end so existing rows' column positions don't
+  // shift (see getOrCreateSheet_ below). This is purely a human-readable
+  // mirror of 'timestamp' for anyone opening the Sheet directly -- e.g.
+  // "4 ส.ค. 2569 20:18:24 น." instead of "2026-08-04T13:18:24.243Z". All
+  // date-based logic in this file (dateKey_, dayPoints_, month/year rollups,
+  // etc.) keeps reading the raw 'timestamp' column, unaffected by this.
+  'timestamp_readable',
 ];
+
+const THAI_MONTHS_ = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+
+// "4 ส.ค. 2569 20:18:24 น." -- day, Thai month abbreviation, Buddhist-era
+// year (Gregorian + 543, matching how the Dashboard page itself already
+// displays dates client-side via toLocaleDateString('th-TH', ...)), 24-hour
+// time, all in Asia/Bangkok local time regardless of what timezone the
+// scraper's machine (a GitHub Actions runner, UTC) sent the raw ISO
+// timestamp in.
+function formatThaiTimestamp_(ts) {
+  const d = ts instanceof Date ? ts : new Date(ts);
+  if (isNaN(d.getTime())) return '';
+  const day = Utilities.formatDate(d, TIMEZONE, 'd');
+  const monthIdx = Number(Utilities.formatDate(d, TIMEZONE, 'M')) - 1;
+  const buddhistYear = Number(Utilities.formatDate(d, TIMEZONE, 'yyyy')) + 543;
+  const time = Utilities.formatDate(d, TIMEZONE, 'HH:mm:ss');
+  return day + ' ' + THAI_MONTHS_[monthIdx] + ' ' + buddhistYear + ' ' + time + ' น.';
+}
 
 function getOrCreateSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -69,8 +95,10 @@ function doPost(e) {
     }
 
     const sheet = getOrCreateSheet_();
+    const resolvedTimestamp = body.timestamp || new Date().toISOString();
     const row = COLUMNS.map((col) => {
-      if (col === 'timestamp') return body.timestamp || new Date().toISOString();
+      if (col === 'timestamp') return resolvedTimestamp;
+      if (col === 'timestamp_readable') return formatThaiTimestamp_(resolvedTimestamp);
       return body[col] !== undefined ? body[col] : '';
     });
     sheet.appendRow(row);
