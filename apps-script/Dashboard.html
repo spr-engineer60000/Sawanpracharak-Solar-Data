@@ -97,6 +97,17 @@
     }
     .status.stale .dot { background: var(--bad); box-shadow: 0 0 0 3px rgba(214,69,69,0.25); }
 
+    /* Shows "วัน/เดือน/ปี เวลาที่อ่านข้อมูล" for the reading currently on
+       screen -- sits above the flow diagram so it's visible without having
+       to find the small footer timestamp at the bottom of the page. */
+    .reading-time {
+      flex-basis: 100%;
+      font-size: 12.5px;
+      color: var(--muted);
+      margin: -6px 0 4px 0;
+    }
+    .reading-time b { color: var(--text); font-weight: 600; }
+
     .panel {
       background: var(--card);
       border: 1px solid var(--border);
@@ -310,6 +321,7 @@
 
   <!-- Flow diagram: solar panel → (home / grid), mirrors the iSolarCloud overview card -->
   <div class="panel flow-card">
+    <div class="reading-time" id="readingTime">แสดงข้อมูล วัน/เดือน/ปี เวลาที่อ่านข้อมูล: <b>–</b></div>
     <div class="flow-diagram">
       <svg class="lines" viewBox="0 0 360 240" preserveAspectRatio="none">
         <polyline points="180,100 180,120" stroke="#c9d3ce" stroke-width="2" fill="none"/>
@@ -713,6 +725,11 @@
           data.points = (data.points || []).map(fixHomeGridSwap);
           data.prevPoints = (data.prevPoints || []).map(fixHomeGridSwap);
           renderChart(chartState.mode, data);
+          // Summary-bar cards follow whichever day is selected here (see
+          // applySummaryBar) -- for today this just re-shows the same live
+          // total refresh() already keeps current; for a past day this is
+          // what actually updates them to that day's totals.
+          applySummaryBar(data.daySummary);
         })
         .withFailureHandler(function (err) { console.error('loadChart failed:', err); })
         .getChartDataForClient(params);
@@ -734,8 +751,10 @@
       const statusEl = document.getElementById('status');
       const statusText = document.getElementById('statusText');
       const lastUpdatedEl = document.getElementById('lastUpdated');
+      const readingTimeEl = document.getElementById('readingTime');
       if (!latestTimestamp) {
         statusText.textContent = 'ยังไม่มีข้อมูล';
+        readingTimeEl.innerHTML = 'แสดงข้อมูล วัน/เดือน/ปี เวลาที่อ่านข้อมูล: <b>ยังไม่มีข้อมูล</b>';
         return;
       }
       const t = new Date(latestTimestamp);
@@ -743,6 +762,12 @@
       statusEl.classList.toggle('stale', ageMs > STALE_AFTER_MS);
       statusText.textContent = ageMs > STALE_AFTER_MS ? 'ข้อมูลไม่อัปเดต (เกิน 20 นาที)' : 'อัปเดตล่าสุด';
       lastUpdatedEl.textContent = 'อัปเดตล่าสุด: ' + t.toLocaleString('th-TH');
+
+      // Full วัน/เดือน/ปี + เวลา of this specific reading, shown prominently
+      // above the flow diagram (not just in the small footer) per request.
+      const dateStr = t.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+      const timeStr = t.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+      readingTimeEl.innerHTML = 'แสดงข้อมูล วัน/เดือน/ปี เวลาที่อ่านข้อมูล: <b>' + dateStr + ' เวลา ' + timeStr + ' น.</b>';
     }
 
     // Grid exchange can never exceed home load for this plant -- confirmed
@@ -763,39 +788,73 @@
       return row;
     }
 
+    // Live/instantaneous tiles -- current PV power, current home/grid MW
+    // gauges, current PV/Load & Grid/Load ratios, environmental totals,
+    // "last updated" status. These represent right-now readings (same as
+    // the source site's live flow diagram), so they always show the
+    // absolute latest reading regardless of which day is picked in the
+    // chart's date picker below -- browsing history there shouldn't make
+    // these look like they went stale.
+    function applyLiveTiles(latest) {
+      if (!latest) return;
+      setText('v-pv', fmt(latest.pv_power_kw, 1) + '<span class="unit">kW</span>');
+      setText('v-pv-node', fmt(latest.pv_power_kw, 1) + ' kW');
+      setText('v-cap', fmt(latest.installed_capacity_kwp, 2) + '<span class="unit">kWp</span>');
+      setText('v-pr', fmt(latest.pr_percent, 0) + '<span class="unit">%</span>');
+      setText('v-home-node', fmt(latest.home_load_mw, 2) + ' MW');
+      setText('v-grid-node', fmt(latest.grid_exchange_mw, 2) + ' MW');
+      setText('v-co2', fmt(latest.co2_reduction_ton, 2) + '<span class="unit">ton</span>');
+      setText('v-coal', fmt(latest.coal_saved_ton, 2) + '<span class="unit">ton</span>');
+      setText('v-trees', fmt(latest.trees_equivalent, 0) + '<span class="unit">trees</span>');
+      updateStatus(latest.timestamp);
+
+      // PV/load and grid/load ratios. These two MUST always sum to exactly
+      // 100% -- this plant has no battery/export, so everything the
+      // hospital draws (home load) comes from PV generation plus grid
+      // import, nothing else. Computing gridLoadPct independently from
+      // grid_exchange_mw (as a separate reading, possibly captured a few
+      // seconds off from the PV/load reading) could land on 99% or 101%
+      // instead of exactly 100 -- so derive it as the complement of
+      // pvLoadPct instead of as its own independent ratio, which
+      // guarantees the two always add up to exactly 100%.
+      const pvKw = Number(latest.pv_power_kw);
+      const loadKw = Number(latest.home_load_mw) * 1000;
+      const pvLoadPct = loadKw > 0 && !Number.isNaN(pvKw) ? (pvKw / loadKw) * 100 : null;
+      const gridLoadPct = pvLoadPct === null ? null : 100 - pvLoadPct;
+      setText('v-pv-load-ratio', fmt(pvLoadPct, 0) + '<span class="unit">%</span>');
+      setText('v-grid-load-ratio', fmt(gridLoadPct, 0) + '<span class="unit">%</span>');
+    }
+
+    // Summary-bar cards (การวิเคราะห์พลังงาน / การผลิต / การใช้พลังงาน /
+    // รายได้สุทธิ) -- these are per-DAY running totals, so unlike the live
+    // tiles above they should reflect whichever day is selected in the
+    // chart's date picker (matching the source site's behavior: picking a
+    // past day updates these same 4 numbers to that day's totals, not just
+    // the chart). row is either today's live latest reading (from refresh())
+    // or the selected day's last reading (daySummary, from loadChart()).
+    function applySummaryBar(row) {
+      if (!row) {
+        setText('v-balance', '–<span class="unit">MWh</span>');
+        setText('v-prod', '–<span class="unit">MWh</span>');
+        setText('v-cons', '–<span class="unit">MWh</span>');
+        setText('v-rev', '–<span class="unit">บาท</span>');
+        return;
+      }
+      setText('v-balance', fmt(row.energy_balance_mwh, 1) + '<span class="unit">MWh</span>');
+      setText('v-prod', fmt(Number(row.production_today) / 1000, 2) + '<span class="unit">MWh</span>');
+      setText('v-cons', fmt(row.consumption_today, 1) + '<span class="unit">MWh</span>');
+      setText('v-rev', fmt(row.net_revenue_thb, 2) + '<span class="unit">บาท</span>');
+    }
+
     function applyData(data) {
       const latest = fixHomeGridSwap(data.latest);
-      if (latest) {
-        setText('v-pv', fmt(latest.pv_power_kw, 1) + '<span class="unit">kW</span>');
-        setText('v-pv-node', fmt(latest.pv_power_kw, 1) + ' kW');
-        setText('v-cap', fmt(latest.installed_capacity_kwp, 2) + '<span class="unit">kWp</span>');
-        setText('v-pr', fmt(latest.pr_percent, 0) + '<span class="unit">%</span>');
-        setText('v-home-node', fmt(latest.home_load_mw, 2) + ' MW');
-        setText('v-grid-node', fmt(latest.grid_exchange_mw, 2) + ' MW');
-        setText('v-balance', fmt(latest.energy_balance_mwh, 1) + '<span class="unit">MWh</span>');
-        setText('v-prod', fmt(Number(latest.production_today) / 1000, 2) + '<span class="unit">MWh</span>');
-        setText('v-cons', fmt(latest.consumption_today, 1) + '<span class="unit">MWh</span>');
-        setText('v-rev', fmt(latest.net_revenue_thb, 2) + '<span class="unit">บาท</span>');
-        setText('v-co2', fmt(latest.co2_reduction_ton, 2) + '<span class="unit">ton</span>');
-        setText('v-coal', fmt(latest.coal_saved_ton, 2) + '<span class="unit">ton</span>');
-        setText('v-trees', fmt(latest.trees_equivalent, 0) + '<span class="unit">trees</span>');
-        updateStatus(latest.timestamp);
-
-        // PV/load and grid/load ratios. These two MUST always sum to exactly
-        // 100% -- this plant has no battery/export, so everything the
-        // hospital draws (home load) comes from PV generation plus grid
-        // import, nothing else. Computing gridLoadPct independently from
-        // grid_exchange_mw (as a separate reading, possibly captured a few
-        // seconds off from the PV/load reading) could land on 99% or 101%
-        // instead of exactly 100 -- so derive it as the complement of
-        // pvLoadPct instead of as its own independent ratio, which
-        // guarantees the two always add up to exactly 100%.
-        const pvKw = Number(latest.pv_power_kw);
-        const loadKw = Number(latest.home_load_mw) * 1000;
-        const pvLoadPct = loadKw > 0 && !Number.isNaN(pvKw) ? (pvKw / loadKw) * 100 : null;
-        const gridLoadPct = pvLoadPct === null ? null : 100 - pvLoadPct;
-        setText('v-pv-load-ratio', fmt(pvLoadPct, 0) + '<span class="unit">%</span>');
-        setText('v-grid-load-ratio', fmt(gridLoadPct, 0) + '<span class="unit">%</span>');
+      applyLiveTiles(latest);
+      // Only let the fast 30s live-refresh drive the summary-bar cards while
+      // "today" is the selected day -- if the user has picked a past day,
+      // this would otherwise overwrite that day's totals with today's on
+      // every refresh tick.
+      if (chartState.date === todayBangkokStr()) {
+        applySummaryBar(latest);
       }
     }
 
