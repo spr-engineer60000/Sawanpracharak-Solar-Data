@@ -195,7 +195,16 @@ function buildDayChart_(rows, params) {
   );
   const prevPoints = dayPoints_(rows, prevDate);
 
-  return { view: 'day', date: date, points: points, prevDate: prevDate, prevPoints: prevPoints };
+  // Summary for the SELECTED day (not always "today") -- the running-total
+  // fields (energy_balance_mwh, production_today, consumption_today,
+  // net_revenue_thb) reset each day, so the day's last reading approximates
+  // its final total, same logic dailyProductionTotals_() already uses for
+  // the month/year rollups. Lets the client show that day's own totals in
+  // the summary-bar cards when browsing history via the date picker,
+  // instead of always showing whatever today's live reading happens to be.
+  const daySummary = points.length ? points[points.length - 1] : null;
+
+  return { view: 'day', date: date, points: points, prevDate: prevDate, prevPoints: prevPoints, daySummary: daySummary };
 }
 
 function buildMonthChart_(rows, params) {
