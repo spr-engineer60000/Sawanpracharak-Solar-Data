@@ -334,18 +334,25 @@ function setup_setWebhookSecret() {
 // One-time setup (see SETUP.md):
 //   1. Run setup_setGithubPat() once with your token pasted in.
 //   2. In the Apps Script editor: Triggers (clock icon) > Add Trigger >
-//      function triggerGitHubScrape_ > Time-driven > Minutes timer >
+//      function triggerGitHubScrape > Time-driven > Minutes timer >
 //      Every 15 minutes > Save.
+//
+// NOTE: named triggerGitHubScrape WITHOUT a trailing underscore on
+// purpose -- Apps Script treats a trailing "_" as "private by convention"
+// and silently hides such functions from both the "Select function to
+// run" dropdown AND the Triggers "Choose which function to run" dropdown,
+// so a name like triggerGitHubScrape_ could never actually be selected
+// there at all.
 // ---------------------------------------------------------------------
 const GITHUB_OWNER = 'spr-engineer60000';
 const GITHUB_REPO = 'Sawanpracharak-Solar-Data';
 const GITHUB_WORKFLOW_FILE = 'scrape.yml';
 const GITHUB_BRANCH = 'main';
 
-function triggerGitHubScrape_() {
+function triggerGitHubScrape() {
   const token = PropertiesService.getScriptProperties().getProperty('GITHUB_PAT');
   if (!token) {
-    Logger.log('triggerGitHubScrape_: no GITHUB_PAT script property set -- skipping. Run setup_setGithubPat() first.');
+    Logger.log('triggerGitHubScrape: no GITHUB_PAT script property set -- skipping. Run setup_setGithubPat() first.');
     return;
   }
   const url =
@@ -367,7 +374,7 @@ function triggerGitHubScrape_() {
   // this ever starts failing silently (e.g. the token expired/was revoked,
   // or the repo/workflow name changed).
   if (code !== 204) {
-    Logger.log('triggerGitHubScrape_: unexpected response ' + code + ': ' + response.getContentText());
+    Logger.log('triggerGitHubScrape: unexpected response ' + code + ': ' + response.getContentText());
   }
 }
 
