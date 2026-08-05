@@ -220,18 +220,45 @@ async function extractHomeGridMwFromDom(page, pvPowerKw) {
   try {
     const found = await page.evaluate(() => {
       const re = /^-?[\d,]*\.?\d+\s*MW$/; // standalone "X.X MW", not "MWh"
+
+      // Real debug-innertext.txt from the live site shows these readouts as
+      // e.g. "3.9MW" with NO space before the unit -- a strong sign the
+      // number and the "MW" unit sit in two separate sibling elements (e.g.
+      // a bold value span next to a smaller/greyed unit span) rather than
+      // one single text node, since that's exactly the pattern you get when
+      // adjacent inline elements have no whitespace between them in the
+      // source HTML. A plain TreeWalker over individual TEXT nodes (the
+      // previous approach) can NEVER match a pattern that requires both the
+      // digits and the unit together when they live in different nodes --
+      // each node only ever contains half the string -- so it silently
+      // found fewer than 2 matches and fell back to the much less reliable
+      // extractFirstTwoMw() text-order guess. That fallback is what
+      // actually produced a wrong home/grid assignment despite this
+      // function's balance logic being correct: the balance logic never
+      // ran at all.
+      //
+      // Fix: scan every ELEMENT (not text node) by its rendered innerText,
+      // which correctly reflects the combined text of a number-span next to
+      // a unit-span the same way a human eye reading the page would. Keep
+      // only matching elements with no matching descendant, so a wrapper
+      // that merely contains a number-span and a unit-span is kept (it's
+      // the smallest element whose own text satisfies the full pattern),
+      // while both an over-broad ancestor and the correct wrapper matching
+      // together don't produce duplicate/nested entries.
+      const candidates = Array.from(document.querySelectorAll('body *')).filter((el) => {
+        const t = (el.innerText || el.textContent || '').trim();
+        return t && re.test(t);
+      });
+      const leaves = candidates.filter(
+        (el) => !candidates.some((other) => other !== el && el.contains(other))
+      );
       const results = [];
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      let node;
-      while ((node = walker.nextNode())) {
-        const text = (node.textContent || '').trim();
-        if (!text || !re.test(text)) continue;
-        const range = document.createRange();
-        range.selectNodeContents(node);
-        const rect = range.getBoundingClientRect();
-        if (rect.width === 0 && rect.height === 0) continue;
+      leaves.forEach((el) => {
+        const text = (el.innerText || el.textContent || '').trim();
+        const rect = el.getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) return;
         results.push({ text: text, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
-      }
+      });
       return results;
     });
 
