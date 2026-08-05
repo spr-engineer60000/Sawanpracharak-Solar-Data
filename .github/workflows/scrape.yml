@@ -17,6 +17,15 @@ on:
     # GitHub's cron parser handles step syntax -- both are valid POSIX
     # cron, but this form can't be misread.
     - cron: '0,15,30,45 * * * *'
+    # Extra run at 23:58 Bangkok time (Asia/Bangkok, UTC+7) every day --
+    # 16:58 UTC below, since GitHub cron is always evaluated in UTC. This
+    # exists on top of the regular 15-minute cadence specifically to
+    # capture that calendar day's near-final reading as close to midnight
+    # as practical, so the day's summary-bar totals (production_today,
+    # etc. -- see Code.gs's daySummary) reflect the full day rather than
+    # whatever the last :45 mark happened to catch, which could be up to
+    # ~15 minutes stale relative to the actual end of day.
+    - cron: '58 16 * * *'
   workflow_dispatch: {}
 
 jobs:
