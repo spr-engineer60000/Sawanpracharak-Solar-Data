@@ -287,3 +287,74 @@ function setup_setWebhookSecret() {
   PropertiesService.getScriptProperties().setProperty('WEBHOOK_SECRET', YOUR_SECRET_HERE);
   Logger.log('Webhook secret saved.');
 }
+
+// ---------------------------------------------------------------------
+// Backup scheduler for the scraper.
+//
+// GitHub's own `schedule:` cron trigger on scrape.yml turned out to be
+// unreliable in practice: it eventually started firing on its own, but
+// only every few hours instead of every 15 minutes as configured -- a
+// known best-effort limitation of GitHub Actions schedules under load,
+// not something fixable from the workflow file itself.
+//
+// This calls GitHub's REST API (workflow_dispatch) directly from an Apps
+// Script time-driven trigger instead, so the *actual* 15-minute cadence
+// is driven by Google's own scheduler rather than GitHub's. Runs
+// alongside GitHub's native schedule -- if both happen to fire close
+// together that's harmless, just a slightly earlier/extra data point.
+//
+// One-time setup (see SETUP.md):
+//   1. Run setup_setGithubPat() once with your token pasted in.
+//   2. In the Apps Script editor: Triggers (clock icon) > Add Trigger >
+//      function triggerGitHubScrape_ > Time-driven > Minutes timer >
+//      Every 15 minutes > Save.
+// ---------------------------------------------------------------------
+const GITHUB_OWNER = 'spr-engineer60000';
+const GITHUB_REPO = 'Sawanpracharak-Solar-Data';
+const GITHUB_WORKFLOW_FILE = 'scrape.yml';
+const GITHUB_BRANCH = 'main';
+
+function triggerGitHubScrape_() {
+  const token = PropertiesService.getScriptProperties().getProperty('GITHUB_PAT');
+  if (!token) {
+    Logger.log('triggerGitHubScrape_: no GITHUB_PAT script property set -- skipping. Run setup_setGithubPat() first.');
+    return;
+  }
+  const url =
+    'https://api.github.com/repos/' + GITHUB_OWNER + '/' + GITHUB_REPO +
+    '/actions/workflows/' + GITHUB_WORKFLOW_FILE + '/dispatches';
+  const response = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      Authorization: 'Bearer ' + token,
+      Accept: 'application/vnd.github+json',
+    },
+    payload: JSON.stringify({ ref: GITHUB_BRANCH }),
+    muteHttpExceptions: true,
+  });
+  const code = response.getResponseCode();
+  // 204 No Content = GitHub accepted the dispatch. Anything else is worth
+  // surfacing -- shows up under "Executions" in the Apps Script editor if
+  // this ever starts failing silently (e.g. the token expired/was revoked,
+  // or the repo/workflow name changed).
+  if (code !== 204) {
+    Logger.log('triggerGitHubScrape_: unexpected response ' + code + ': ' + response.getContentText());
+  }
+}
+
+/**
+ * Convenience function: run this once manually (select it in the toolbar
+ * dropdown, click Run) to store your GitHub Personal Access Token without
+ * needing to click through Project Settings. Change YOUR_TOKEN_HERE, run
+ * it once, then you can delete the line (the token stays saved either way).
+ *
+ * Needs a Fine-grained PAT scoped to ONLY the Sawanpracharak-Solar-Data
+ * repo, with just the "Actions: Read and write" repository permission --
+ * see SETUP.md for exact steps to create one.
+ */
+function setup_setGithubPat() {
+  const YOUR_TOKEN_HERE = 'paste-your-github_pat_xxx-token-here';
+  PropertiesService.getScriptProperties().setProperty('GITHUB_PAT', YOUR_TOKEN_HERE);
+  Logger.log('GitHub PAT saved.');
+}
