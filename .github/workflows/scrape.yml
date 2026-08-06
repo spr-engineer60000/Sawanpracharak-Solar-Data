@@ -62,6 +62,22 @@ jobs:
         run: npx playwright install-deps chromium
         if: steps.playwright-cache.outputs.cache-hit == 'true'
 
+      # Restores the iSolarCloud login session (cookies/localStorage) saved
+      # by the previous run, if any, so scraper.js can skip logging in with
+      # username/password again as long as that session is still valid --
+      # see scraper.js's SESSION_STATE_PATH. Every run saves under a unique
+      # key (the run ID, so the save step below always succeeds -- GitHub
+      # cache entries are immutable per key), and restores using the
+      # `isolar-session-` prefix, which GitHub resolves to the
+      # most-recently-created matching entry, i.e. last run's session.
+      - name: Restore iSolarCloud session
+        uses: actions/cache/restore@v4
+        with:
+          path: scraper/session-state.json
+          key: isolar-session-${{ github.run_id }}
+          restore-keys: |
+            isolar-session-
+
       - name: Run scraper
         working-directory: scraper
         env:
@@ -71,6 +87,23 @@ jobs:
           APPSCRIPT_URL: ${{ secrets.APPSCRIPT_URL }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
         run: npm run scrape
+
+      # Saves whatever session scraper.js ended up with (freshly logged in,
+      # or the restored one confirmed still valid) under this run's own
+      # unique key, so the *next* run's restore step above picks it up.
+      # Uses always() rather than success() on purpose: scraper.js writes
+      # this file right after login succeeds, before it does any page
+      # parsing, so a valid freshly-captured session should still be kept
+      # even on a run that later fails for an unrelated reason (e.g. a
+      # page-layout/parse issue) -- only an outright login failure (e.g.
+      # CAPTCHA-blocked) leaves nothing new to save, in which case this
+      # just re-caches the same already-stale file, which is harmless.
+      - name: Save iSolarCloud session
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: scraper/session-state.json
+          key: isolar-session-${{ github.run_id }}
 
       # Uploaded every run now (not just on failure) -- scraper.js always
       # writes these two files, even when the run succeeds, specifically so
