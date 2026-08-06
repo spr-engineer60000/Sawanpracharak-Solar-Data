@@ -340,8 +340,15 @@ async function loginIfNeeded(page, username, password) {
   }
 }
 
+// Where a saved login session (cookies + localStorage) is read from and
+// written back to, so a run can reuse a still-valid session instead of
+// typing the username/password in fresh every single time -- see the
+// storageState usage in main() below for why.
+const SESSION_STATE_PATH = require('path').join(__dirname, 'session-state.json');
+
 async function main() {
   const { chromium } = require('playwright');
+  const fs = require('fs');
 
   const ISOLAR_URL = process.env.ISOLAR_URL;
   const ISOLAR_USERNAME = process.env.ISOLAR_USERNAME;
@@ -355,11 +362,25 @@ async function main() {
   }
 
   const browser = await chromium.launch({ headless: true });
+  const hasSavedSession = fs.existsSync(SESSION_STATE_PATH);
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     locale: 'th-TH',
+    // Reuse a saved login session across runs instead of logging in fresh
+    // with username/password every single time (previously every ~15
+    // minutes, ~100x/day). iSolarCloud flagged the account for "unusual
+    // activity" and forced a password reset + CAPTCHA after a burst of
+    // these frequent automated logins from GitHub's shared runner IPs --
+    // reusing one long-lived session (like leaving a browser tab logged
+    // in, rather than re-typing the password every 15 minutes) cuts fresh
+    // logins down to only whenever the saved session has actually expired.
+    // The caller (see scrape.yml) is responsible for persisting this file
+    // across runs via actions/cache, since each run starts on a fresh
+    // GitHub Actions VM with nothing on disk.
+    storageState: hasSavedSession ? SESSION_STATE_PATH : undefined,
   });
   const page = await context.newPage();
+  if (hasSavedSession) console.log('Loaded a saved session; will skip login entirely if it is still valid.');
 
   console.log('Opening iSolarCloud plant page...');
   await page.goto(ISOLAR_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -373,10 +394,17 @@ async function main() {
     // tell wrong-password vs OTP/CAPTCHA vs something else entirely.
     await page.screenshot({ path: 'debug-screenshot.png', fullPage: true }).catch(() => {});
     const failText = await page.evaluate(() => document.body.innerText).catch(() => '');
-    require('fs').writeFileSync('debug-innertext.txt', failText);
+    fs.writeFileSync('debug-innertext.txt', failText);
     await browser.close();
     throw loginErr;
   }
+
+  // Login succeeded (or the saved session was still valid and no fresh
+  // login was even needed) -- (re)save the session now so the next run
+  // gets a fresh copy to try first, extending it like a sliding expiry.
+  await context.storageState({ path: SESSION_STATE_PATH }).catch((e) => {
+    console.warn('Could not save session state (non-fatal, next run will just log in fresh):', e.message);
+  });
 
   // After logging in, the app may have redirected to a generic home page --
   // go back to the specific plant URL to make sure we land on the right page.
@@ -391,7 +419,28 @@ async function main() {
       { timeout: 45000 }
     );
   } catch (e) {
-    console.warn('Timed out waiting for expected label text; continuing anyway.');
+    // Seen once so far: the page rendered fully in Simplified Chinese
+    // instead of Thai for this account, even though login and the
+    // underlying data were both fine -- every field below fails to parse
+    // when that happens, since extraction is anchored to Thai label text.
+    // Root cause isn't confirmed (could be a one-off per-session locale
+    // glitch, or an account-level display-language setting that got
+    // changed) -- a full reload is cheap and safe to try before giving up.
+    // If it's still not in Thai afterwards, this falls through and the run
+    // fails loudly below (via the missing-fields check) rather than
+    // silently posting wrong-language garbage.
+    console.warn('Expected Thai label text not found (page may have rendered in another language) -- reloading once and rechecking...');
+    await page.goto(ISOLAR_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    await dismissCookieBanner(page);
+    try {
+      await page.waitForFunction(
+        () => document.body.innerText.includes('กำลังไฟฟ้าแบบเรียลไทม์'),
+        { timeout: 20000 }
+      );
+      console.log('Thai label text found after reload.');
+    } catch (e2) {
+      console.warn('Still not in Thai after reload; continuing anyway (extraction will likely fail and this run will be flagged for review).');
+    }
   }
 
   // Give charts / async widgets a little extra time to settle.
@@ -421,7 +470,7 @@ async function main() {
   // why misparses like that took several guess-and-check rounds to fix).
   // Kept small/overwritten every run rather than versioned.
   await page.screenshot({ path: 'debug-screenshot.png', fullPage: true }).catch(() => {});
-  require('fs').writeFileSync('debug-innertext.txt', text);
+  fs.writeFileSync('debug-innertext.txt', text);
 
   const payload = {
     secret: WEBHOOK_SECRET,
