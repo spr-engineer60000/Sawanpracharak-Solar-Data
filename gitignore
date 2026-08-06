@@ -1,0 +1,8 @@
+node_modules/
+
+# Saved iSolarCloud login session (cookies/localStorage) used by the
+# scraper to avoid logging in with username/password on every run -- see
+# scraper/scraper.js's SESSION_STATE_PATH and scrape.yml's cache steps.
+# Never commit this: it's live session credentials for the account, and in
+# CI it only ever exists as a GitHub Actions cache entry, not a repo file.
+scraper/session-state.json
