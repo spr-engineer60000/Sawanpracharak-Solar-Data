@@ -1,31 +1,31 @@
 name: Scrape iSolarCloud dashboard
 
 on:
-  schedule:
-    # Runs every 15 minutes, aligned to real clock quarters starting at
-    # minute 0 (:00 / :15 / :30 / :45, UTC -- per explicit request). Note
-    # GitHub itself warns load is worst exactly at these marks because
-    # every repo's identically-scheduled workflow fires at once, so
-    # `schedule:` runs here can still lag behind the exact minute -- that's
-    # a GitHub-side best-effort limitation, not something this file
-    # controls. See Code.gs's triggerGitHubScrape_() / SETUP.md for a
-    # second, more dependable driver of this same workflow that runs from
-    # Google Apps Script's own scheduler instead of GitHub's.
-    #
-    # Spelled out as an explicit comma list (rather than the equivalent
-    # "*/15 * * * *" step form) purely to rule out any doubt about how
-    # GitHub's cron parser handles step syntax -- both are valid POSIX
-    # cron, but this form can't be misread.
-    - cron: '0,15,30,45 * * * *'
-    # Extra run at 23:58 Bangkok time (Asia/Bangkok, UTC+7) every day --
-    # 16:58 UTC below, since GitHub cron is always evaluated in UTC. This
-    # exists on top of the regular 15-minute cadence specifically to
-    # capture that calendar day's near-final reading as close to midnight
-    # as practical, so the day's summary-bar totals (production_today,
-    # etc. -- see Code.gs's daySummary) reflect the full day rather than
-    # whatever the last :45 mark happened to catch, which could be up to
-    # ~15 minutes stale relative to the actual end of day.
-    - cron: '58 16 * * *'
+  # ---------------------------------------------------------------------
+  # PAUSED (temporarily) -- iSolarCloud is showing a "unusual activity /
+  # change your password" screen with a reCAPTCHA on this account, which
+  # blocks login for BOTH a human in a real browser and this automated
+  # scraper (a CAPTCHA can't be solved by automation, on purpose -- this
+  # scraper does not attempt to bypass it). Every automatic run that hits
+  # this wall is itself another failed automated login attempt, which risks
+  # reinforcing iSolarCloud's "suspicious" flag on the account instead of
+  # letting it clear. So the recurring `schedule:` triggers below are
+  # commented out until a person confirms normal manual login (via a real
+  # browser, completing the CAPTCHA/any prompts) works cleanly again for a
+  # few days in a row.
+  #
+  # To RESUME: uncomment the `schedule:` block back to what it was --
+  #   schedule:
+  #     - cron: '0,15,30,45 * * * *'
+  #     - cron: '58 16 * * *'
+  # -- and also re-enable Code.gs's triggerGitHubScrape() (see the matching
+  # PAUSED note there), since that's a second, independent 15-minute
+  # trigger driven from Google Apps Script rather than GitHub's schedule,
+  # and disabling only this file's schedule: does NOT stop that one.
+  #
+  # schedule:
+  #   - cron: '0,15,30,45 * * * *'
+  #   - cron: '58 16 * * *'
   workflow_dispatch: {}
 
 jobs:
