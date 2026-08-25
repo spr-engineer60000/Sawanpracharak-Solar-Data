@@ -9,11 +9,13 @@ on:
   # If the CAPTCHA wall ever comes back, re-comment this block the same way
   # it was before and re-add the early `return;` in triggerGitHubScrape().
   #
-  # NOTE (2026-08-25, later same day): no scheduled run fired for the first
-  # ~30 min after this was uncommented -- GitHub sometimes needs a fresh
-  # commit that actually touches the file to re-register a `schedule:`
-  # trigger, rather than picking it up right away. This comment line is
-  # that re-commit.
+  # NOTE: after re-enabling, `schedule:` didn't fire for over an hour even
+  # after a follow-up commit that touched this file -- everything else
+  # checked out fine (file content, branch, fork status, Actions
+  # permissions, workflow not disabled), so this file was deleted and
+  # re-created from scratch on GitHub (not just edited) to force a clean
+  # re-registration of the schedule trigger, which is the more reliable fix
+  # for a `schedule:` that's stuck not firing.
   schedule:
     - cron: '0,15,30,45 * * * *'
     - cron: '58 16 * * *'
