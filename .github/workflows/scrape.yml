@@ -1,31 +1,16 @@
 name: Scrape iSolarCloud dashboard
 
 on:
-  # ---------------------------------------------------------------------
-  # PAUSED (temporarily) -- iSolarCloud is showing a "unusual activity /
-  # change your password" screen with a reCAPTCHA on this account, which
-  # blocks login for BOTH a human in a real browser and this automated
-  # scraper (a CAPTCHA can't be solved by automation, on purpose -- this
-  # scraper does not attempt to bypass it). Every automatic run that hits
-  # this wall is itself another failed automated login attempt, which risks
-  # reinforcing iSolarCloud's "suspicious" flag on the account instead of
-  # letting it clear. So the recurring `schedule:` triggers below are
-  # commented out until a person confirms normal manual login (via a real
-  # browser, completing the CAPTCHA/any prompts) works cleanly again for a
-  # few days in a row.
-  #
-  # To RESUME: uncomment the `schedule:` block back to what it was --
-  #   schedule:
-  #     - cron: '0,15,30,45 * * * *'
-  #     - cron: '58 16 * * *'
-  # -- and also re-enable Code.gs's triggerGitHubScrape() (see the matching
-  # PAUSED note there), since that's a second, independent 15-minute
-  # trigger driven from Google Apps Script rather than GitHub's schedule,
-  # and disabling only this file's schedule: does NOT stop that one.
-  #
-  # schedule:
-  #   - cron: '0,15,30,45 * * * *'
-  #   - cron: '58 16 * * *'
+  # RESUMED (2026-08-25) -- the iSolarCloud "unusual activity" CAPTCHA block
+  # cleared: run #1297 (the first attempt in 8 days, a single manual test,
+  # not a hammered retry) logged in and scraped cleanly. Re-enabled here
+  # together with Code.gs's triggerGitHubScrape() (see the matching note
+  # there) since both need to be back on for the normal 15-minute cadence.
+  # If the CAPTCHA wall ever comes back, re-comment this block the same way
+  # it was before and re-add the early `return;` in triggerGitHubScrape().
+  schedule:
+    - cron: '0,15,30,45 * * * *'
+    - cron: '58 16 * * *'
   workflow_dispatch: {}
 
 jobs:
