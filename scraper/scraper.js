@@ -500,7 +500,27 @@ async function main() {
   console.log('Webhook response status:', res.status);
   console.log('Webhook response body:', resText.slice(0, 500));
 
-  if (!res.ok) {
+  // IMPORTANT: Apps Script web apps always answer HTTP 200 for doPost/doGet
+  // no matter what status code Code.gs's jsonResponse_() tries to set --
+  // ContentService has no way to send a real non-200 status. That means
+  // `res.ok` (an HTTP-status check) is ALWAYS true here, even when doPost
+  // itself failed (wrong WEBHOOK_SECRET, a sheet-write exception, etc.) and
+  // returned a JSON body like {"ok":false,"error":"..."}. Relying on res.ok
+  // alone let failed webhook posts silently report success (exit 0, green
+  // checkmark in Actions) while writing nothing to the Sheet -- so parse the
+  // body and check its own `ok` field instead/in addition.
+  let webhookOk = res.ok;
+  let webhookBody = null;
+  try {
+    webhookBody = JSON.parse(resText);
+    if (webhookBody && webhookBody.ok !== true) webhookOk = false;
+  } catch (e) {
+    console.warn('Webhook response body was not valid JSON:', e.message);
+    webhookOk = false;
+  }
+
+  if (!webhookOk) {
+    console.error('Webhook post failed:', webhookBody ? webhookBody.error || JSON.stringify(webhookBody) : '(unparseable response, see body above)');
     // debug-screenshot.png / debug-innertext.txt were already written above.
     await browser.close();
     process.exit(1);
