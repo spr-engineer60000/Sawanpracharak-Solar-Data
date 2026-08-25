@@ -8,6 +8,12 @@ on:
   # there) since both need to be back on for the normal 15-minute cadence.
   # If the CAPTCHA wall ever comes back, re-comment this block the same way
   # it was before and re-add the early `return;` in triggerGitHubScrape().
+  #
+  # NOTE (2026-08-25, later same day): no scheduled run fired for the first
+  # ~30 min after this was uncommented -- GitHub sometimes needs a fresh
+  # commit that actually touches the file to re-register a `schedule:`
+  # trigger, rather than picking it up right away. This comment line is
+  # that re-commit.
   schedule:
     - cron: '0,15,30,45 * * * *'
     - cron: '58 16 * * *'
