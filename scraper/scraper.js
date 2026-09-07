@@ -50,6 +50,24 @@
 const NUM = '([\\-+]?\\d[\\d,]*\\.?\\d*)';
 const CONTEXT_CHARS = 120;
 
+// iSolarCloud's own anomaly-detection screen (seen when the account gets
+// flagged for "unusual activity" -- e.g. a burst of automated logins from
+// GitHub's shared runner IPs -- and iSolarCloud responds by blocking normal
+// access behind a forced password-reset + reCAPTCHA challenge). This is a
+// DIFFERENT failure mode than the page simply rendering in the wrong
+// language (see the reload-retry logic in main() below): no amount of
+// reloading or language-forcing fixes this, since it isn't a rendering
+// glitch -- the account is genuinely locked out pending a human completing
+// that verification in a real browser. Detecting it explicitly lets the
+// run fail fast with an actionable message instead of the confusing
+// generic "page didn't render in Thai" warning followed by 8+ fields
+// silently coming back null.
+const SECURITY_BLOCK_PHRASE = 'ตรวจพบความผิดปกติในบัญชีของคุณ';
+
+function isSecurityBlocked(text) {
+  return typeof text === 'string' && text.includes(SECURITY_BLOCK_PHRASE);
+}
+
 function extractNumber(text, label, unitRegexSrc) {
   const unit = '(?:' + unitRegexSrc + ')(?![a-zA-Zก-๙])';
   const forwardRe = new RegExp('^\\s*' + NUM + '\\s*' + unit);
@@ -419,7 +437,30 @@ async function main() {
       { timeout: 45000 }
     );
   } catch (e) {
-    // Seen once so far: the page rendered fully in Simplified Chinese
+    const textAfterFirstWait = await page.evaluate(() => document.body.innerText).catch(() => '');
+
+    // iSolarCloud's own anomaly-detection block (see SECURITY_BLOCK_PHRASE
+    // above) -- this is NOT a rendering/language problem, so reloading
+    // cannot fix it: the account is genuinely locked out pending a human
+    // completing the reCAPTCHA + password-reset flow in a real browser.
+    // Fail immediately with a message that says exactly what's wrong and
+    // what to do about it, instead of burning a reload + 20s wait first
+    // and then reporting a vague "8 of 12 fields failed to parse".
+    if (isSecurityBlocked(textAfterFirstWait)) {
+      await page.screenshot({ path: 'debug-screenshot.png', fullPage: true }).catch(() => {});
+      fs.writeFileSync('debug-innertext.txt', textAfterFirstWait);
+      await browser.close();
+      throw new Error(
+        'iSolarCloud has flagged this account for "unusual activity" and is blocking access ' +
+        'behind a forced password-reset + reCAPTCHA screen (message: "' + SECURITY_BLOCK_PHRASE + '..."). ' +
+        'This cannot be automated around -- a human needs to log in to iSolarCloud in a real ' +
+        'browser, complete the verification, and set a new password. If the password changes, ' +
+        'update the ISOLAR_PASSWORD secret in this repo\'s GitHub Actions settings to match. ' +
+        'See debug-screenshot.png / debug-innertext.txt from this run for exactly what iSolarCloud showed.'
+      );
+    }
+
+    // Seen once before: the page rendered fully in Simplified Chinese
     // instead of Thai for this account, even though login and the
     // underlying data were both fine -- every field below fails to parse
     // when that happens, since extraction is anchored to Thai label text.
@@ -439,6 +480,20 @@ async function main() {
       );
       console.log('Thai label text found after reload.');
     } catch (e2) {
+      const textAfterReload = await page.evaluate(() => document.body.innerText).catch(() => '');
+      if (isSecurityBlocked(textAfterReload)) {
+        await page.screenshot({ path: 'debug-screenshot.png', fullPage: true }).catch(() => {});
+        fs.writeFileSync('debug-innertext.txt', textAfterReload);
+        await browser.close();
+        throw new Error(
+          'iSolarCloud has flagged this account for "unusual activity" and is blocking access ' +
+          'behind a forced password-reset + reCAPTCHA screen (message: "' + SECURITY_BLOCK_PHRASE + '..."). ' +
+          'This cannot be automated around -- a human needs to log in to iSolarCloud in a real ' +
+          'browser, complete the verification, and set a new password. If the password changes, ' +
+          'update the ISOLAR_PASSWORD secret in this repo\'s GitHub Actions settings to match. ' +
+          'See debug-screenshot.png / debug-innertext.txt from this run for exactly what iSolarCloud showed.'
+        );
+      }
       console.warn('Still not in Thai after reload; continuing anyway (extraction will likely fail and this run will be flagged for review).');
     }
   }
@@ -500,27 +555,7 @@ async function main() {
   console.log('Webhook response status:', res.status);
   console.log('Webhook response body:', resText.slice(0, 500));
 
-  // IMPORTANT: Apps Script web apps always answer HTTP 200 for doPost/doGet
-  // no matter what status code Code.gs's jsonResponse_() tries to set --
-  // ContentService has no way to send a real non-200 status. That means
-  // `res.ok` (an HTTP-status check) is ALWAYS true here, even when doPost
-  // itself failed (wrong WEBHOOK_SECRET, a sheet-write exception, etc.) and
-  // returned a JSON body like {"ok":false,"error":"..."}. Relying on res.ok
-  // alone let failed webhook posts silently report success (exit 0, green
-  // checkmark in Actions) while writing nothing to the Sheet -- so parse the
-  // body and check its own `ok` field instead/in addition.
-  let webhookOk = res.ok;
-  let webhookBody = null;
-  try {
-    webhookBody = JSON.parse(resText);
-    if (webhookBody && webhookBody.ok !== true) webhookOk = false;
-  } catch (e) {
-    console.warn('Webhook response body was not valid JSON:', e.message);
-    webhookOk = false;
-  }
-
-  if (!webhookOk) {
-    console.error('Webhook post failed:', webhookBody ? webhookBody.error || JSON.stringify(webhookBody) : '(unparseable response, see body above)');
+  if (!res.ok) {
     // debug-screenshot.png / debug-innertext.txt were already written above.
     await browser.close();
     process.exit(1);
@@ -539,7 +574,7 @@ async function main() {
   await browser.close();
 }
 
-module.exports = { extractNumber, parseMetrics, extractHomeGridMwFromDom };
+module.exports = { extractNumber, parseMetrics, extractHomeGridMwFromDom, isSecurityBlocked };
 
 if (require.main === module) {
   main().catch((err) => {
