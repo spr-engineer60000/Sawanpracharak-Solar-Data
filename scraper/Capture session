@@ -1,0 +1,84 @@
+/**
+ * ONE-TIME LOCAL HELPER -- run this on your own computer (NOT in GitHub
+ * Actions, NOT on a server) to capture a real, human-authenticated
+ * iSolarCloud session that the automated scraper (scraper.js) can reuse
+ * instead of ever logging in itself from GitHub's shared runner IPs.
+ *
+ * Why this exists: iSolarCloud's anti-bot system flags fresh logins coming
+ * from GitHub Actions' shared cloud IPs as "unusual activity" and blocks
+ * them behind a forced password-reset + reCAPTCHA screen. That challenge
+ * cannot be solved by a script, and should not be -- it exists specifically
+ * to stop automated logins. The reliable fix is to stop the automated
+ * scraper from ever needing to submit a fresh login itself: log in ONCE by
+ * hand from a normal, trusted connection (this confirmed does not trigger
+ * the block), save that browser session, and let the scraper reuse it.
+ *
+ * What this script does: opens a REAL, visible Chromium window pointed at
+ * your iSolarCloud plant URL. You log in by hand, exactly like you always
+ * do in a normal browser. Once you are looking at the actual dashboard
+ * (numbers and charts visible, no popups, no login form), come back to
+ * this terminal and press Enter. It then saves your browser's cookies +
+ * localStorage to a new file, session-state.json, in this same folder.
+ *
+ * What to do with session-state.json:
+ *   1. Open it and copy its ENTIRE contents.
+ *   2. In your GitHub repo: Settings > Secrets and variables > Actions >
+ *      New repository secret, named exactly ISOLAR_SESSION_SEED, and paste
+ *      the contents there directly on the GitHub page.
+ *   3. Delete session-state.json from your computer afterwards (or at
+ *      least keep it somewhere private) -- like a password, it grants full
+ *      access to the iSolarCloud account for as long as it stays valid.
+ *   NEVER paste this file's contents into a chat, an issue, a commit, or
+ *   anywhere else public -- it is exactly as sensitive as the account
+ *   password.
+ *
+ * Usage (run from the scraper/ folder, on your own computer):
+ *   npm install                        (if you haven't already)
+ *   npx playwright install chromium    (first time only)
+ *   ISOLAR_URL="https://...your plant URL..." node capture-session.js
+ */
+const readline = require('readline');
+
+function waitForEnter(prompt) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(prompt, () => {
+      rl.close();
+      resolve();
+    });
+  });
+}
+
+async function main() {
+  const { chromium } = require('playwright');
+  const ISOLAR_URL = process.env.ISOLAR_URL;
+  if (!ISOLAR_URL) {
+    console.error(
+      'Set ISOLAR_URL first, e.g.:\n' +
+      '  ISOLAR_URL="https://...your plant URL..." node capture-session.js'
+    );
+    process.exit(1);
+  }
+
+  const browser = await chromium.launch({ headless: false });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'th-TH' });
+  const page = await context.newPage();
+  await page.goto(ISOLAR_URL, { waitUntil: 'domcontentloaded' });
+
+  console.log('\nA browser window has opened. Log in by hand and make sure you can see the real');
+  console.log('dashboard (numbers, charts -- no popups, no login form) before continuing.\n');
+  await waitForEnter('Once the dashboard is fully loaded, press Enter here to save the session... ');
+
+  await context.storageState({ path: 'session-state.json' });
+  console.log('\nSaved session-state.json in this folder.');
+  console.log('Open that file, copy its ENTIRE contents, and paste them into the');
+  console.log('ISOLAR_SESSION_SEED GitHub Actions secret (Settings > Secrets and variables > Actions).');
+  console.log('Do NOT commit this file to the repo or paste it anywhere else -- it grants full account access.\n');
+
+  await browser.close();
+}
+
+main().catch((err) => {
+  console.error('Failed:', err);
+  process.exit(1);
+});
